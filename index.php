@@ -92,17 +92,120 @@ class PlayerProfitTracker {
         $this->initializeAccountsFile();
     }
     
-    private function initializeAccountsFile() {
+    /**
+     * Check if this is a first-time setup (no accounts configured)
+     */
+    public function isFirstTimeSetup() {
         if (!file_exists($this->accountsFile)) {
-            $accounts = [
-                'std_5k' => ['name' => 'Standard $5K', 'tier' => 'Standard', 'size' => 5000, 'active' => true],
-                'std_10k' => ['name' => 'Standard $10K', 'tier' => 'Standard', 'size' => 10000, 'active' => true],
-                'std_100k_1' => ['name' => 'Standard $100K #1', 'tier' => 'Standard', 'size' => 100000, 'active' => true],
-                'std_100k_2' => ['name' => 'Standard $100K #2', 'tier' => 'Standard', 'size' => 100000, 'active' => true],
-                'pro_50k' => ['name' => 'Pro $50K', 'tier' => 'Pro', 'size' => 50000, 'active' => true],
-                'pro_100k' => ['name' => 'Pro $100K', 'tier' => 'Pro', 'size' => 100000, 'active' => true]
-            ];
-            file_put_contents($this->accountsFile, json_encode($accounts, JSON_PRETTY_PRINT));
+            return true;
+        }
+        
+        $accounts = json_decode(file_get_contents($this->accountsFile), true);
+        return empty($accounts) || !is_array($accounts);
+    }
+    
+    /**
+     * Get all available PlayerProfit account configurations
+     */
+    public function getAvailableAccountTypes() {
+        return [
+            'Standard' => [
+                ['size' => 1000, 'display' => '$1,000', 'cost' => 'TBD'],
+                ['size' => 5000, 'display' => '$5,000', 'cost' => 'TBD'],
+                ['size' => 10000, 'display' => '$10,000', 'cost' => '$274'],
+                ['size' => 25000, 'display' => '$25,000', 'cost' => 'TBD'],
+                ['size' => 50000, 'display' => '$50,000', 'cost' => 'TBD'],
+                ['size' => 100000, 'display' => '$100,000', 'cost' => 'TBD']
+            ],
+            'Pro' => [
+                ['size' => 5000, 'display' => '$5,000', 'cost' => 'TBD'],
+                ['size' => 10000, 'display' => '$10,000', 'cost' => 'TBD'],
+                ['size' => 25000, 'display' => '$25,000', 'cost' => 'TBD'],
+                ['size' => 50000, 'display' => '$50,000', 'cost' => 'TBD'],
+                ['size' => 100000, 'display' => '$100,000', 'cost' => 'TBD']
+            ]
+        ];
+    }
+    
+    /**
+     * Create a new account based on user selection
+     */
+    public function createAccount($tier, $size, $customName = null) {
+        $accounts = $this->getAllAccounts();
+        
+        // Generate unique account ID
+        $accountId = strtolower($tier) . '_' . ($size / 1000) . 'k';
+        $counter = 1;
+        $originalId = $accountId;
+        
+        while (isset($accounts[$accountId])) {
+            $counter++;
+            $accountId = $originalId . '_' . $counter;
+        }
+        
+        // Create account configuration
+        $accountName = $customName ?: ($tier . ' $' . number_format($size / 1000) . 'K');
+        if ($counter > 1) {
+            $accountName .= ' #' . $counter;
+        }
+        
+        $accounts[$accountId] = [
+            'name' => $accountName,
+            'tier' => $tier,
+            'size' => $size,
+            'active' => true,
+            'created' => date('Y-m-d H:i:s')
+        ];
+        
+        // Save updated accounts
+        file_put_contents($this->accountsFile, json_encode($accounts, JSON_PRETTY_PRINT));
+        
+        // Initialize account data files
+        $this->initializeAccountData($accountId, $tier, $size);
+        
+        return $accountId;
+    }
+    
+    /**
+     * Initialize data files for a new account
+     */
+    private function initializeAccountData($accountId, $tier, $size) {
+        $dataFile = __DIR__ . '/data/account_' . $accountId . '_data.json';
+        $configFile = __DIR__ . '/data/account_' . $accountId . '_config.json';
+        
+        // Initialize account data
+        $initialData = [
+            'bets' => [],
+            'account_balance' => $size,
+            'starting_balance' => $size,
+            'total_wagered' => 0,
+            'total_profit' => 0,
+            'win_rate' => 0,
+            'total_bets' => 0,
+            'wins' => 0,
+            'losses' => 0,
+            'pushes' => 0
+        ];
+        
+        // Initialize account config
+        $initialConfig = [
+            'account_tier' => $tier,
+            'account_size' => $size,
+            'current_phase' => 'Phase 1',
+            'start_date' => date('Y-m-d'),
+            'last_activity' => date('Y-m-d'),
+            'phase_start_balance' => $size,
+            'highest_balance' => $size
+        ];
+        
+        file_put_contents($dataFile, json_encode($initialData, JSON_PRETTY_PRINT));
+        file_put_contents($configFile, json_encode($initialConfig, JSON_PRETTY_PRINT));
+    }
+    
+    private function initializeAccountsFile() {
+        // For v2.0, only create empty accounts file - users will set up their own accounts
+        if (!file_exists($this->accountsFile)) {
+            file_put_contents($this->accountsFile, json_encode([], JSON_PRETTY_PRINT));
         }
     }
     
@@ -1495,10 +1598,43 @@ if (isset($_GET['switch_account'])) {
     exit;
 }
 
+// Handle first-time setup wizard
+if (isset($_POST['action']) && $_POST['action'] === 'create_account') {
+    // Temporarily create tracker to handle setup
+    $setupTracker = new PlayerProfitTracker();
+    
+    $tier = $_POST['tier'];
+    $size = intval($_POST['size']);
+    $customName = trim($_POST['custom_name']) ?: null;
+    
+    $accountId = $setupTracker->createAccount($tier, $size, $customName);
+    
+    if ($accountId) {
+        $_SESSION['current_account'] = $accountId;
+        header("Location: " . $_SERVER['PHP_SELF'] . "?setup_complete=1");
+        exit;
+    } else {
+        $setupError = "Failed to create account. Please try again.";
+    }
+}
+
 // Handle form submissions
 $message = "";
-$currentAccountId = $_SESSION['current_account'] ?? 'pro_50k';
-$tracker = new PlayerProfitTracker($currentAccountId);
+$currentAccountId = $_SESSION['current_account'] ?? null;
+
+// Create temporary tracker to check for first-time setup
+$tempTracker = new PlayerProfitTracker();
+if ($tempTracker->isFirstTimeSetup() && !isset($_GET['setup']) && !isset($_POST['action'])) {
+    $showSetupWizard = true;
+    $tracker = $tempTracker; // Use temp tracker for setup
+} else {
+    $showSetupWizard = false;
+    // Use proper account ID or fallback
+    if (!$currentAccountId) {
+        $currentAccountId = 'pro_50k'; // Fallback for existing installations
+    }
+    $tracker = new PlayerProfitTracker($currentAccountId);
+}
 
 // Initialize the current account
 $tracker->initializeAccount($currentAccountId);
@@ -1844,6 +1980,9 @@ if ($_POST) {
 }
 
 // Check for redirect messages
+if (isset($_GET['setup_complete'])) {
+    $message = "🎉 Welcome to PlayerProfit Tracker! Your account has been created successfully.";
+}
 if (isset($_GET['setup'])) {
     $message = "✅ Account setup complete!";
 }
@@ -1860,12 +1999,21 @@ if (isset($_GET['advanced'])) {
     $message = "🎉 Phase advanced successfully!";
 }
 
-$config = $tracker->loadConfig();
-$accountStatus = $tracker->getAccountStatus();
-$allBets = $tracker->getAllBets();
-$violations = $tracker->checkViolations();
-
-$discordMessage = $tracker->getDiscordMessage();
+// Load data only if not showing setup wizard
+if (!$showSetupWizard) {
+    $config = $tracker->loadConfig();
+    $accountStatus = $tracker->getAccountStatus();
+    $allBets = $tracker->getAllBets();
+    $violations = $tracker->checkViolations();
+    $discordMessage = $tracker->getDiscordMessage();
+} else {
+    // Setup wizard mode - minimal data needed
+    $config = null;
+    $accountStatus = null;
+    $allBets = [];
+    $violations = [];
+    $discordMessage = '';
+}
 
 // Check if current account is set up
 $needsSetup = false; // Multi-account system handles setup automatically
@@ -2486,6 +2634,266 @@ $needsSetup = false; // Multi-account system handles setup automatically
         .status-card-enhanced .card-subtitle {
             color: rgba(255,255,255,0.9) !important;
         }
+        
+        /* === SETUP WIZARD STYLES === */
+        .setup-wizard-overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: linear-gradient(135deg, rgba(26, 26, 46, 0.98), rgba(22, 33, 62, 0.98));
+            z-index: 10000;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            backdrop-filter: blur(10px);
+        }
+        
+        .setup-wizard-container {
+            background: rgba(255, 255, 255, 0.05);
+            backdrop-filter: blur(15px);
+            border: 1px solid rgba(255, 215, 0, 0.3);
+            border-radius: 20px;
+            padding: 40px;
+            max-width: 800px;
+            width: 90%;
+            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5);
+            color: white;
+            position: relative;
+            max-height: 90vh;
+            overflow-y: auto;
+        }
+        
+        .setup-wizard-header {
+            text-align: center;
+            margin-bottom: 40px;
+        }
+        
+        .setup-wizard-header h1 {
+            color: #FFD700;
+            font-size: 2.5em;
+            margin-bottom: 10px;
+            text-shadow: 0 2px 10px rgba(255, 215, 0, 0.3);
+        }
+        
+        .setup-wizard-header p {
+            color: #ccc;
+            font-size: 1.1em;
+            margin: 0;
+        }
+        
+        .setup-error {
+            background: rgba(244, 67, 54, 0.2);
+            border: 1px solid #f44336;
+            border-radius: 8px;
+            padding: 15px;
+            margin-bottom: 20px;
+            color: #ff6b6b;
+        }
+        
+        .setup-step {
+            display: none;
+            animation: fadeInUp 0.3s ease;
+        }
+        
+        .setup-step.active {
+            display: block;
+        }
+        
+        .setup-step h2 {
+            color: #FFD700;
+            font-size: 1.8em;
+            margin-bottom: 25px;
+            text-align: center;
+        }
+        
+        .account-type-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 20px;
+            margin-bottom: 30px;
+        }
+        
+        .account-type-card {
+            background: rgba(255, 255, 255, 0.05);
+            border: 2px solid rgba(255, 255, 255, 0.1);
+            border-radius: 15px;
+            padding: 25px;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            text-align: center;
+        }
+        
+        .account-type-card:hover {
+            border-color: rgba(255, 215, 0, 0.5);
+            background: rgba(255, 215, 0, 0.05);
+            transform: translateY(-2px);
+            box-shadow: 0 8px 25px rgba(0, 0, 0, 0.3);
+        }
+        
+        .account-type-card.selected {
+            border-color: #FFD700;
+            background: rgba(255, 215, 0, 0.1);
+            box-shadow: 0 0 20px rgba(255, 215, 0, 0.3);
+        }
+        
+        .account-type-card h3 {
+            color: #FFD700;
+            margin-bottom: 15px;
+            font-size: 1.3em;
+        }
+        
+        .account-features .feature {
+            margin-bottom: 8px;
+            color: #ccc;
+            font-size: 0.95em;
+        }
+        
+        .account-sizes {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+            gap: 15px;
+            margin-bottom: 30px;
+        }
+        
+        .account-size-card {
+            background: rgba(255, 255, 255, 0.05);
+            border: 2px solid rgba(255, 255, 255, 0.1);
+            border-radius: 12px;
+            padding: 20px;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            text-align: center;
+        }
+        
+        .account-size-card:hover {
+            border-color: rgba(255, 215, 0, 0.5);
+            background: rgba(255, 215, 0, 0.05);
+            transform: translateY(-2px);
+        }
+        
+        .account-size-card.selected {
+            border-color: #FFD700;
+            background: rgba(255, 215, 0, 0.1);
+            box-shadow: 0 0 15px rgba(255, 215, 0, 0.3);
+        }
+        
+        .account-size-card h3 {
+            color: #FFD700;
+            margin-bottom: 8px;
+            font-size: 1.2em;
+        }
+        
+        .size-cost {
+            color: #4CAF50;
+            font-weight: bold;
+            margin-bottom: 10px;
+        }
+        
+        .size-features {
+            color: #ccc;
+            font-size: 0.85em;
+        }
+        
+        .size-features div {
+            margin-bottom: 4px;
+        }
+        
+        .setup-summary {
+            margin-top: 20px;
+        }
+        
+        .summary-card {
+            background: rgba(255, 255, 255, 0.05);
+            border: 1px solid rgba(255, 215, 0, 0.3);
+            border-radius: 12px;
+            padding: 25px;
+        }
+        
+        .summary-card h3 {
+            color: #FFD700;
+            margin-bottom: 15px;
+            text-align: center;
+        }
+        
+        .summary-item {
+            margin-bottom: 10px;
+            color: #ccc;
+        }
+        
+        .summary-item strong {
+            color: white;
+            margin-right: 10px;
+        }
+        
+        .setup-wizard-actions {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-top: 30px;
+            gap: 15px;
+        }
+        
+        .setup-wizard-form .form-group {
+            margin-bottom: 20px;
+        }
+        
+        .setup-wizard-form label {
+            display: block;
+            margin-bottom: 8px;
+            color: white;
+            font-weight: 500;
+        }
+        
+        .setup-wizard-form input[type="text"] {
+            width: 100%;
+            padding: 12px 15px;
+            background: rgba(0, 0, 0, 0.4);
+            border: 2px solid rgba(255, 255, 255, 0.1);
+            border-radius: 8px;
+            color: white;
+            font-size: 16px;
+            transition: border-color 0.3s ease;
+        }
+        
+        .setup-wizard-form input[type="text"]:focus {
+            outline: none;
+            border-color: #FFD700;
+            box-shadow: 0 0 10px rgba(255, 215, 0, 0.3);
+        }
+        
+        .setup-wizard-form small {
+            color: #999;
+            font-size: 0.85em;
+            margin-top: 5px;
+            display: block;
+        }
+        
+        @media (max-width: 768px) {
+            .setup-wizard-container {
+                padding: 30px 20px;
+                margin: 20px;
+                max-height: 95vh;
+            }
+            
+            .account-type-grid {
+                grid-template-columns: 1fr;
+            }
+            
+            .account-sizes {
+                grid-template-columns: 1fr;
+            }
+            
+            .setup-wizard-header h1 {
+                font-size: 2em;
+            }
+            
+            .setup-step h2 {
+                font-size: 1.5em;
+            }
+        }
+        
     </style>
     
     <!-- Enhanced UI CSS -->
@@ -2786,8 +3194,91 @@ $needsSetup = false; // Multi-account system handles setup automatically
     </script>
 </head>
 <body>
-    <!-- Mobile navigation removed for cleaner interface -->
-    
+<?php if ($showSetupWizard): ?>
+    <!-- Setup Wizard for First-Time Users -->
+    <div class="setup-wizard-overlay">
+        <div class="setup-wizard-container">
+            <div class="setup-wizard-header">
+                <h1>🏆 Welcome to PlayerProfit Tracker v2.0</h1>
+                <p>Let's set up your first PlayerProfit account to get started</p>
+            </div>
+            
+            <?php if (isset($setupError)): ?>
+                <div class="setup-error">
+                    ❌ <?= htmlspecialchars($setupError) ?>
+                </div>
+            <?php endif; ?>
+            
+            <form method="POST" class="setup-wizard-form">
+                <input type="hidden" name="action" value="create_account">
+                
+                <div class="setup-step active" data-step="1">
+                    <h2>Step 1: Choose Account Type</h2>
+                    <div class="account-type-grid">
+                        <div class="account-type-card" data-tier="Standard">
+                            <h3>📊 Standard Account</h3>
+                            <div class="account-features">
+                                <div class="feature">✅ Entry-level challenge</div>
+                                <div class="feature">✅ Lower risk requirements</div>
+                                <div class="feature">✅ Perfect for beginners</div>
+                                <div class="feature">💰 Risk: $10 - $50 per bet</div>
+                            </div>
+                        </div>
+                        <div class="account-type-card" data-tier="Pro">
+                            <h3>🚀 Pro Account</h3>
+                            <div class="account-features">
+                                <div class="feature">✅ Advanced challenge</div>
+                                <div class="feature">✅ Higher potential returns</div>
+                                <div class="feature">✅ For experienced bettors</div>
+                                <div class="feature">💰 Risk: $100 - $5000 per bet</div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                
+                <div class="setup-step" data-step="2">
+                    <h2>Step 2: Select Account Size</h2>
+                    <div class="account-sizes" id="account-sizes">
+                        <!-- Account sizes will be populated by JavaScript based on tier selection -->
+                    </div>
+                </div>
+                
+                <div class="setup-step" data-step="3">
+                    <h2>Step 3: Account Details</h2>
+                    <div class="form-group">
+                        <label for="custom_name">Custom Account Name (Optional)</label>
+                        <input type="text" name="custom_name" id="custom_name" 
+                               placeholder="e.g., My First Challenge" 
+                               maxlength="50">
+                        <small>Leave blank to use default name based on tier and size</small>
+                    </div>
+                    
+                    <div class="setup-summary" id="setup-summary">
+                        <!-- Summary will be populated by JavaScript -->
+                    </div>
+                </div>
+                
+                <div class="setup-wizard-actions">
+                    <button type="button" class="btn btn-secondary" id="setup-prev-btn" style="display: none;">
+                        ← Previous
+                    </button>
+                    <button type="button" class="btn btn-primary" id="setup-next-btn">
+                        Next →
+                    </button>
+                    <button type="submit" class="btn btn-success" id="setup-create-btn" style="display: none;">
+                        🚀 Create Account
+                    </button>
+                </div>
+                
+                <!-- Hidden form fields for final submission -->
+                <input type="hidden" name="tier" id="selected-tier">
+                <input type="hidden" name="size" id="selected-size">
+            </form>
+        </div>
+    </div>
+
+<?php else: ?>
+    <!-- Main Application Interface -->
     <div class="container">
         <!-- Sticky Header with Title and Account Tabs -->
         <div class="sticky-header">
@@ -4569,6 +5060,133 @@ $needsSetup = false; // Multi-account system handles setup automatically
                 document.getElementById('chat-notification').style.display = 'block';
             }
         }
+        
+        <?php if ($showSetupWizard): ?>
+        // Setup Wizard JavaScript
+        const accountTypes = <?= json_encode($tracker->getAvailableAccountTypes()) ?>;
+        
+        let currentStep = 1;
+        let selectedTier = '';
+        let selectedSize = 0;
+        
+        // Account type selection
+        document.querySelectorAll('.account-type-card').forEach(card => {
+            card.addEventListener('click', function() {
+                document.querySelectorAll('.account-type-card').forEach(c => c.classList.remove('selected'));
+                this.classList.add('selected');
+                selectedTier = this.dataset.tier;
+                document.getElementById('selected-tier').value = selectedTier;
+                updateNextButton();
+            });
+        });
+        
+        // Step navigation
+        document.getElementById('setup-next-btn').addEventListener('click', function() {
+            if (currentStep === 1) {
+                if (selectedTier) {
+                    showStep(2);
+                    populateAccountSizes();
+                } else {
+                    alert('Please select an account type');
+                }
+            } else if (currentStep === 2) {
+                if (selectedSize > 0) {
+                    showStep(3);
+                    updateSummary();
+                } else {
+                    alert('Please select an account size');
+                }
+            }
+        });
+        
+        document.getElementById('setup-prev-btn').addEventListener('click', function() {
+            if (currentStep === 2) {
+                showStep(1);
+            } else if (currentStep === 3) {
+                showStep(2);
+            }
+        });
+        
+        function showStep(step) {
+            document.querySelectorAll('.setup-step').forEach(s => s.classList.remove('active'));
+            document.querySelector(`[data-step="${step}"]`).classList.add('active');
+            
+            currentStep = step;
+            
+            // Update buttons
+            document.getElementById('setup-prev-btn').style.display = step > 1 ? 'inline-block' : 'none';
+            document.getElementById('setup-next-btn').style.display = step < 3 ? 'inline-block' : 'none';
+            document.getElementById('setup-create-btn').style.display = step === 3 ? 'inline-block' : 'none';
+        }
+        
+        function populateAccountSizes() {
+            const container = document.getElementById('account-sizes');
+            const sizes = accountTypes[selectedTier];
+            
+            container.innerHTML = sizes.map(size => `
+                <div class="account-size-card" data-size="${size.size}">
+                    <h3>${size.display}</h3>
+                    <div class="size-cost">${size.cost}</div>
+                    <div class="size-features">
+                        <div>💰 Account Balance: ${size.display}</div>
+                        <div>🎯 Phase 1 Target: $${(size.size * 1.2).toLocaleString()}</div>
+                        <div>🏆 Phase 2 Target: $${(size.size * 1.44).toLocaleString()}</div>
+                    </div>
+                </div>
+            `).join('');
+            
+            // Add click handlers
+            document.querySelectorAll('.account-size-card').forEach(card => {
+                card.addEventListener('click', function() {
+                    document.querySelectorAll('.account-size-card').forEach(c => c.classList.remove('selected'));
+                    this.classList.add('selected');
+                    selectedSize = parseInt(this.dataset.size);
+                    document.getElementById('selected-size').value = selectedSize;
+                    updateNextButton();
+                });
+            });
+        }
+        
+        function updateSummary() {
+            const summary = document.getElementById('setup-summary');
+            const customName = document.getElementById('custom_name').value;
+            const defaultName = `${selectedTier} $${(selectedSize / 1000)}K`;
+            
+            summary.innerHTML = `
+                <div class="summary-card">
+                    <h3>📋 Account Summary</h3>
+                    <div class="summary-item">
+                        <strong>Account Type:</strong> ${selectedTier}
+                    </div>
+                    <div class="summary-item">
+                        <strong>Account Size:</strong> $${selectedSize.toLocaleString()}
+                    </div>
+                    <div class="summary-item">
+                        <strong>Account Name:</strong> ${customName || defaultName}
+                    </div>
+                    <div class="summary-item">
+                        <strong>Phase 1 Target:</strong> $${(selectedSize * 1.2).toLocaleString()} (20% profit)
+                    </div>
+                    <div class="summary-item">
+                        <strong>Phase 2 Target:</strong> $${(selectedSize * 1.44).toLocaleString()} (20% more profit)
+                    </div>
+                    <div class="summary-item">
+                        <strong>Risk Limits:</strong> ${selectedTier === 'Standard' ? '$10 - $50' : '$100 - $5,000'} per bet
+                    </div>
+                </div>
+            `;
+        }
+        
+        function updateNextButton() {
+            const nextBtn = document.getElementById('setup-next-btn');
+            if (currentStep === 1) {
+                nextBtn.disabled = !selectedTier;
+            } else if (currentStep === 2) {
+                nextBtn.disabled = !selectedSize;
+            }
+        }
+        <?php endif; ?>
     </script>
+<?php endif; ?>
 </body>
 </html>
