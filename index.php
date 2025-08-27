@@ -330,9 +330,11 @@ class PlayerProfitTracker {
         $config = $this->loadConfig();
         $data = $this->loadData();
         
-        // Ensure highest_balance is tracked
+        // Ensure highest_balance is tracked and properly initialized
         if (!isset($config['highest_balance'])) {
+            // For existing accounts, set highest_balance to current balance if it's higher than account size
             $config['highest_balance'] = max($config['account_size'], $data['account_balance']);
+            $this->saveConfig($config); // Save the initialization
         }
         
         // Validate bet size against account limits with drawdown protection
@@ -422,9 +424,9 @@ class PlayerProfitTracker {
             ];
         }
         
-        // Check max drawdown (15%)
+        // Check max drawdown (15% from highest balance ever reached)
         $maxDrawdown = $this->getMaxDrawdown();
-        $drawdownLimit = $config['account_size'] * 0.15;
+        $drawdownLimit = $config['highest_balance'] * 0.15;
         if ($maxDrawdown > $drawdownLimit) {
             $violations[] = [
                 'type' => 'max_drawdown',
@@ -524,24 +526,19 @@ class PlayerProfitTracker {
     }
     
     public function getMaxDrawdown() {
+        $config = $this->loadConfig();
         $data = $this->loadData();
-        $runningBalance = $data['account_balance'];
-        $peak = $runningBalance;
-        $maxDrawdown = 0;
         
-        // Calculate running balances and find max drawdown
-        foreach (array_reverse($data['bets']) as $bet) {
-            $runningBalance -= $bet['pnl'];
-            if ($runningBalance > $peak) {
-                $peak = $runningBalance;
-            }
-            $currentDrawdown = $peak - $runningBalance;
-            if ($currentDrawdown > $maxDrawdown) {
-                $maxDrawdown = $currentDrawdown;
-            }
-        }
+        // Use the highest balance ever reached (stored in config)
+        $highestBalance = $config['highest_balance'] ?? $config['account_size'];
+        $currentBalance = $data['account_balance'];
         
-        return $maxDrawdown;
+        // Current drawdown from highest point
+        $currentDrawdown = $highestBalance - $currentBalance;
+        
+        // For historical max drawdown, we need to track it through bet history
+        // But the critical compliance metric is current drawdown from high watermark
+        return max(0, $currentDrawdown);
     }
     
     public function advancePhase() {
@@ -1611,7 +1608,8 @@ if (isset($_POST['action']) && $_POST['action'] === 'create_account') {
     
     if ($accountId) {
         $_SESSION['current_account'] = $accountId;
-        header("Location: " . $_SERVER['PHP_SELF'] . "?setup_complete=1");
+        $_SESSION['account_created'] = $accountId; // Track newly created account
+        header("Location: " . $_SERVER['PHP_SELF'] . "?account_created=" . urlencode($accountId));
         exit;
     } else {
         $setupError = "Failed to create account. Please try again.";
@@ -1624,7 +1622,15 @@ $currentAccountId = $_SESSION['current_account'] ?? null;
 
 // Create temporary tracker to check for first-time setup
 $tempTracker = new PlayerProfitTracker();
-if ($tempTracker->isFirstTimeSetup() && !isset($_GET['setup']) && !isset($_POST['action'])) {
+$showSetupWizard = false;
+$showAccountCreated = false;
+
+if (isset($_GET['account_created'])) {
+    // Show account creation success page
+    $showAccountCreated = true;
+    $createdAccountId = $_GET['account_created'];
+    $tracker = new PlayerProfitTracker($createdAccountId);
+} elseif (($tempTracker->isFirstTimeSetup() || isset($_GET['create_another'])) && !isset($_GET['setup']) && !isset($_POST['action'])) {
     $showSetupWizard = true;
     $tracker = $tempTracker; // Use temp tracker for setup
 } else {
@@ -2000,19 +2006,27 @@ if (isset($_GET['advanced'])) {
 }
 
 // Load data only if not showing setup wizard
-if (!$showSetupWizard) {
+if (!$showSetupWizard && !$showAccountCreated) {
     $config = $tracker->loadConfig();
     $accountStatus = $tracker->getAccountStatus();
     $allBets = $tracker->getAllBets();
     $violations = $tracker->checkViolations();
     $discordMessage = $tracker->getDiscordMessage();
 } else {
-    // Setup wizard mode - minimal data needed
-    $config = null;
-    $accountStatus = null;
-    $allBets = [];
-    $violations = [];
-    $discordMessage = '';
+    // Setup wizard mode or account created page - minimal data needed
+    if ($showAccountCreated) {
+        $config = $tracker->loadConfig();
+        $accountStatus = null; // Don't need full status
+        $allBets = [];
+        $violations = [];
+        $discordMessage = '';
+    } else {
+        $config = null;
+        $accountStatus = null;
+        $allBets = [];
+        $violations = [];
+        $discordMessage = '';
+    }
 }
 
 // Check if current account is set up
@@ -2894,6 +2908,70 @@ $needsSetup = false; // Multi-account system handles setup automatically
             }
         }
         
+        /* === ACCOUNT CREATED SUCCESS PAGE === */
+        .account-created-header {
+            text-align: center;
+            margin-bottom: 30px;
+        }
+        
+        .account-created-header h1 {
+            color: #4CAF50;
+            font-size: 2.5em;
+            margin-bottom: 10px;
+            text-shadow: 0 2px 10px rgba(76, 175, 80, 0.3);
+        }
+        
+        .account-created-header p {
+            color: #ccc;
+            font-size: 1.1em;
+        }
+        
+        .created-account-info {
+            margin: 30px 0;
+        }
+        
+        .account-created-actions {
+            text-align: center;
+            margin-top: 30px;
+        }
+        
+        .action-buttons {
+            display: flex;
+            gap: 20px;
+            justify-content: center;
+            margin-bottom: 20px;
+            flex-wrap: wrap;
+        }
+        
+        .btn-large {
+            padding: 18px 35px;
+            font-size: 16px;
+            min-width: 200px;
+        }
+        
+        .help-text {
+            color: #999;
+            font-size: 0.9em;
+            line-height: 1.5;
+        }
+        
+        .help-text p {
+            margin: 5px 0;
+        }
+        
+        @media (max-width: 768px) {
+            .action-buttons {
+                flex-direction: column;
+                align-items: center;
+            }
+            
+            .btn-large {
+                min-width: 250px;
+                width: 100%;
+                max-width: 300px;
+            }
+        }
+        
     </style>
     
     <!-- Enhanced UI CSS -->
@@ -3274,6 +3352,54 @@ $needsSetup = false; // Multi-account system handles setup automatically
                 <input type="hidden" name="tier" id="selected-tier">
                 <input type="hidden" name="size" id="selected-size">
             </form>
+        </div>
+    </div>
+
+<?php elseif ($showAccountCreated): ?>
+    <!-- Account Creation Success Page -->
+    <div class="setup-wizard-overlay">
+        <div class="setup-wizard-container">
+            <div class="account-created-header">
+                <h1>🎉 Account Created Successfully!</h1>
+                <p>Your PlayerProfit account has been set up and is ready to use</p>
+            </div>
+            
+            <div class="created-account-info">
+                <div class="summary-card">
+                    <h3>📋 Account Details</h3>
+                    <div class="summary-item">
+                        <strong>Account Name:</strong> <?= htmlspecialchars($config['account_tier'] ?? 'Unknown') ?> $<?= number_format(($config['account_size'] ?? 0) / 1000) ?>K
+                    </div>
+                    <div class="summary-item">
+                        <strong>Account Tier:</strong> <?= htmlspecialchars($config['account_tier'] ?? 'Unknown') ?>
+                    </div>
+                    <div class="summary-item">
+                        <strong>Starting Balance:</strong> $<?= number_format($config['account_size'] ?? 0) ?>
+                    </div>
+                    <div class="summary-item">
+                        <strong>Current Phase:</strong> <?= htmlspecialchars($config['current_phase'] ?? 'Phase 1') ?>
+                    </div>
+                    <div class="summary-item">
+                        <strong>Phase 1 Target:</strong> $<?= number_format(($config['account_size'] ?? 0) * 1.2) ?> (20% profit)
+                    </div>
+                </div>
+            </div>
+            
+            <div class="account-created-actions">
+                <div class="action-buttons">
+                    <a href="<?= $_SERVER['PHP_SELF'] ?>" class="btn btn-success btn-large">
+                        🚀 Start Tracking Bets
+                    </a>
+                    <button type="button" class="btn btn-primary btn-large" onclick="createAnotherAccount()">
+                        ➕ Create Another Account
+                    </button>
+                </div>
+                
+                <div class="help-text">
+                    <p>✅ Ready to start your PlayerProfit challenge!</p>
+                    <p>You can create multiple accounts to track different challenge types or sizes.</p>
+                </div>
+            </div>
         </div>
     </div>
 
@@ -5184,6 +5310,14 @@ $needsSetup = false; // Multi-account system handles setup automatically
             } else if (currentStep === 2) {
                 nextBtn.disabled = !selectedSize;
             }
+        }
+        <?php endif; ?>
+        
+        <?php if ($showAccountCreated): ?>
+        // Account Created Page JavaScript
+        function createAnotherAccount() {
+            // Redirect to setup wizard
+            window.location.href = '<?= $_SERVER['PHP_SELF'] ?>?create_another=1';
         }
         <?php endif; ?>
     </script>
