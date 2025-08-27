@@ -1,6 +1,10 @@
-# 🏆 PlayerProfit Betting Tracker v1.0
+# 🏆 PlayerProfit Betting Tracker v2.0
 
-A comprehensive betting tracking application designed specifically for **PlayerProfit** prop firm challenge participants. Features multi-account support, AI-powered bet import, real-time compliance monitoring, and advanced analytics with a modern responsive UI.
+A comprehensive betting tracking application designed specifically for **PlayerProfit** prop firm challenge participants. Features first-time setup wizard, multi-account support, AI-powered bet import, real-time compliance monitoring, and advanced analytics with a modern responsive UI.
+
+[![GitHub release (latest by date)](https://img.shields.io/github/v/release/elblanco2/playerprofit-betting-tracker)](https://github.com/elblanco2/playerprofit-betting-tracker/releases)
+[![GitHub](https://img.shields.io/github/license/elblanco2/playerprofit-betting-tracker)](LICENSE)
+[![Docker](https://img.shields.io/badge/docker-ready-blue.svg)](Dockerfile)
 
 ## 🎯 PlayerProfit Account Integration
 
@@ -258,14 +262,23 @@ chmod +x run.sh
 - ✅ Parlay bet support with reverse odds calculation
 - ✅ Real-time violation detection and warnings
 
-### v2.0 - Coming Soon
+### v2.0 - Current Release ✨
+**Latest Features:**
+- ✅ First-time setup wizard for new users
+- ✅ Dynamic account creation system  
+- ✅ All PlayerProfit account sizes ($1K, $5K, $10K, $25K, $50K, $100K)
+- ✅ Independent user setup (no pre-configured accounts)
+- ✅ Enhanced onboarding experience
+- ✅ Multiple account creation flow
+- ✅ Critical compliance fixes (high watermark tracking)
+- ✅ Professional account creation success page
+
+### v2.1 - Coming Soon
 **Planned Features:**
-- 🔄 First-time setup wizard for new users
-- 🔄 Dynamic account creation system
-- 🔄 All PlayerProfit account sizes ($1K, $5K, $10K, $25K, $50K, $100K)
-- 🔄 Independent user setup (no pre-configured accounts)
-- 🔄 Enhanced onboarding experience
-- 🔄 Account template system
+- 🔄 Enhanced parlay bet analysis
+- 🔄 Advanced statistics and reporting
+- 🔄 Export functionality
+- 🔄 Mobile app companion
 
 ## 🔧 Development
 
