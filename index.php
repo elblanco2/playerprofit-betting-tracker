@@ -201,7 +201,14 @@ class PlayerProfitTracker {
         if (isset($_SESSION['current_account'])) {
             return $_SESSION['current_account'];
         }
-        return 'pro_50k'; // Default to your current account
+        
+        // Get first available account instead of hardcoded fallback
+        $allAccounts = $this->getAllAccounts();
+        if (!empty($allAccounts)) {
+            return array_keys($allAccounts)[0];
+        }
+        
+        return 'pro_50k'; // Final fallback only if no accounts exist
     }
     
     public function setCurrentAccount($accountId) {
@@ -1163,7 +1170,7 @@ OUTPUT (CSV only, no explanations):";
                     'content' => $prompt
                 ]
             ],
-            'max_tokens' => 2000,
+            'max_tokens' => 8000,
             'temperature' => 0.1
         ];
         
@@ -1176,7 +1183,7 @@ OUTPUT (CSV only, no explanations):";
     private function callAnthropic($prompt, $apiKey) {
         $data = [
             'model' => 'claude-3-5-sonnet-20241022',
-            'max_tokens' => 2000,
+            'max_tokens' => 8000,
             'messages' => [
                 [
                     'role' => 'user',
@@ -1203,7 +1210,7 @@ OUTPUT (CSV only, no explanations):";
             ],
             'generationConfig' => [
                 'temperature' => 0.1,
-                'maxOutputTokens' => 2000
+                'maxOutputTokens' => 8000
             ]
         ];
         
@@ -1236,7 +1243,7 @@ OUTPUT (CSV only, no explanations):";
             CURLOPT_POST => true,
             CURLOPT_POSTFIELDS => json_encode($data),
             CURLOPT_HTTPHEADER => $headers,
-            CURLOPT_TIMEOUT => 30,
+            CURLOPT_TIMEOUT => 120,
             CURLOPT_FOLLOWLOCATION => true,
             CURLOPT_SSL_VERIFYPEER => true
         ]);
@@ -1312,7 +1319,7 @@ OUTPUT (CSV only, no explanations):";
         }
 
         // Build conversation prompt for chat context
-        $systemPrompt = "You are an expert betting data analyst helping users format their betting history for the PlayerProfit tracking system. Your job is to:\n\n1. Help users understand the required CSV format: Date,Sport,Selection,Stake,Odds,Result\n2. Convert unstructured betting data into proper CSV format\n3. Answer questions about betting data formatting\n4. Provide guidance on PlayerProfit compliance rules\n5. Handle parlay bets with reverse odds calculation\n\nWhen users paste betting data, convert it to CSV format. When they ask questions, provide helpful guidance.\n\nRequired CSV format:\n- Date: YYYY-MM-DD format\n- Sport: NFL, NBA, MLB, NHL, Tennis, Soccer, etc.\n- Selection: Team name + bet type (e.g., 'Patriots ML', 'Lakers +5.5')\n- Stake: Numeric value (no currency symbols)\n- Odds: American format (-110, +120, etc.)\n- Result: WIN, LOSS, PUSH, REFUNDED, or CASHED OUT\n\nPARLAY BET HANDLING (CRITICAL):\nFor parlay bets with missing individual leg odds:\n\nWINNING PARLAYS:\n- Calculate combined odds using: (profit ÷ stake) = ratio\n- Convert to American: If ratio ≥ 1, use +[ratio×100]; if ratio < 1, use -[100÷ratio]\n- Example: \\$1000 bet won \\$2500 profit = 2.5 ratio = +250 odds\n\nLOSING PARLAYS:\n- Use -110 as placeholder (losses don't affect profit tracking)\n\nBet Result Types:\n- WIN: Bet won normally\n- LOSS: Bet lost normally\n- PUSH: Tie/No action, stake returned\n- REFUNDED: Bet cancelled/voided, stake returned\n- CASHED OUT: User cashed out early for partial payout\n\nExample:\n2025-01-15,NFL,Patriots ML,1000,-110,WIN\n2025-01-14,NBA,Lakers +5.5,1500,-105,LOSS\n2025-01-13,Multi,3-leg Parlay,500,+240,WIN\n2025-01-12,Multi,2-team Parlay,1000,-110,LOSS";
+        $systemPrompt = "You are an expert betting data analyst helping users format their betting history for the PlayerProfit tracking system. Your job is to:\n\n1. Help users understand the required CSV format: Date,Sport,Selection,Stake,Odds,Result\n2. Convert unstructured betting data into proper CSV format\n3. Answer questions about betting data formatting\n4. Provide guidance on PlayerProfit compliance rules\n5. Handle parlay bets with reverse odds calculation\n\nWhen users paste betting data, convert it to CSV format. When they ask questions, provide helpful guidance.\n\nIMPORTANT: For large datasets with many bets, process ALL bets provided by the user. Do not truncate or abbreviate the output. Complete the entire CSV conversion even if it results in a long response.\n\nRequired CSV format:\n- Date: YYYY-MM-DD format\n- Sport: NFL, NBA, MLB, NHL, Tennis, Soccer, etc.\n- Selection: Team name + bet type (e.g., 'Patriots ML', 'Lakers +5.5')\n- Stake: Numeric value (no currency symbols)\n- Odds: American format (-110, +120, etc.)\n- Result: WIN, LOSS, PUSH, REFUNDED, or CASHED OUT\n\nPARLAY BET HANDLING (CRITICAL):\nFor parlay bets with missing individual leg odds:\n\nWINNING PARLAYS:\n- Calculate combined odds using: (profit ÷ stake) = ratio\n- Convert to American: If ratio ≥ 1, use +[ratio×100]; if ratio < 1, use -[100÷ratio]\n- Example: \\$1000 bet won \\$2500 profit = 2.5 ratio = +250 odds\n\nLOSING PARLAYS:\n- Use -110 as placeholder (losses don't affect profit tracking)\n\nBET RESULT TYPES (CRITICAL FOR P&L CALCULATION):\n- WIN: Bet won normally - calculate profit based on odds\n- LOSS: Bet lost normally - full stake amount lost (-stake)\n- PUSH: Tie/No action - ZERO P&L (stake returned, no profit/loss)\n- REFUNDED: Bet cancelled/voided - ZERO P&L (stake returned, no profit/loss)\n- CASHED OUT: User cashed out early for partial payout\n\nIMPORTANT: PUSH and REFUNDED bets have ZERO impact on profit/loss calculation. They return the original stake with no gain or loss. Always include them in the CSV data but mark them clearly as PUSH or REFUNDED.\n\nCOMMON TERMS TO MAP:\n- PUSH: 'Tie', 'No Action', 'Draw', 'Even', 'P'\n- REFUNDED: 'Void', 'Cancelled', 'Canceled', 'Refund', 'Postponed', 'Suspended'\n\nExample CSV with all result types:\n2025-01-15,NFL,Patriots ML,1000,-110,WIN\n2025-01-14,NBA,Lakers +5.5,1500,-105,LOSS\n2025-01-13,Multi,3-leg Parlay,500,+240,WIN\n2025-01-12,Multi,2-team Parlay,1000,-110,LOSS\n2025-01-11,NBA,Celtics ML,800,-120,PUSH\n2025-01-10,NFL,Chiefs +3,1200,+105,REFUNDED";
 
         $chatPrompt = $systemPrompt . "\n\nUser: " . $userMessage . "\n\nAssistant:";
 
@@ -1334,7 +1341,7 @@ OUTPUT (CSV only, no explanations):";
                         ['role' => 'system', 'content' => $systemPrompt],
                         ['role' => 'user', 'content' => $userMessage]
                     ],
-                    'max_tokens' => 2000,
+                    'max_tokens' => 8000,
                     'temperature' => 0.1
                 ];
                 break;
@@ -1352,7 +1359,7 @@ OUTPUT (CSV only, no explanations):";
                     'messages' => [
                         ['role' => 'user', 'content' => $userMessage]
                     ],
-                    'max_tokens' => 2000
+                    'max_tokens' => 8000
                 ];
                 break;
 
@@ -1365,7 +1372,7 @@ OUTPUT (CSV only, no explanations):";
                     ],
                     'generationConfig' => [
                         'temperature' => 0.1,
-                        'maxOutputTokens' => 2000
+                        'maxOutputTokens' => 8000
                     ]
                 ];
                 break;
@@ -1379,7 +1386,7 @@ OUTPUT (CSV only, no explanations):";
                     'stream' => false,
                     'options' => [
                         'temperature' => 0.1,
-                        'num_predict' => 2000
+                        'num_predict' => 8000
                     ]
                 ];
                 break;
@@ -1396,7 +1403,7 @@ OUTPUT (CSV only, no explanations):";
             CURLOPT_POST => true,
             CURLOPT_POSTFIELDS => json_encode($data),
             CURLOPT_HTTPHEADER => $headers,
-            CURLOPT_TIMEOUT => 30,
+            CURLOPT_TIMEOUT => 120,
             CURLOPT_SSL_VERIFYPEER => false
         ]);
 
@@ -1675,9 +1682,14 @@ if (isset($_GET['account_created'])) {
     error_log("Setup wizard should be shown: isFirstTimeSetup=" . ($tempTracker->isFirstTimeSetup() ? 'true' : 'false'));
 } else {
     $showSetupWizard = false;
-    // Use proper account ID or fallback
+    // Use proper account ID or fallback to first available account
     if (!$currentAccountId) {
-        $currentAccountId = 'pro_50k'; // Fallback for existing installations
+        $allAccounts = $tempTracker->getAllAccounts();
+        if (!empty($allAccounts)) {
+            $currentAccountId = array_keys($allAccounts)[0]; // Use first available account
+        } else {
+            $currentAccountId = 'pro_50k'; // Final fallback
+        }
     }
     $tracker = new PlayerProfitTracker($currentAccountId);
 }
@@ -4926,9 +4938,19 @@ $needsSetup = false; // Multi-account system handles setup automatically
             // Update UI
             sendBtn.disabled = true;
             sendBtn.innerHTML = '⏳ Thinking...';
-            chatStatus.textContent = 'AI is processing your request...';
+            chatStatus.textContent = 'AI is processing your request... (This may take up to 2 minutes for large datasets)';
             
             try {
+                // Create an abort controller for timeout handling
+                const controller = new AbortController();
+                const timeoutId = setTimeout(() => controller.abort(), 120000); // 2 minutes timeout
+                
+                // Show progress message after 30 seconds
+                const progressTimeoutId = setTimeout(() => {
+                    chatStatus.textContent = 'Still processing large dataset... Please wait (up to 2 minutes total)';
+                    sendBtn.innerHTML = '⏳ Processing...';
+                }, 30000);
+                
                 const response = await fetch('', {
                     method: 'POST',
                     headers: {
@@ -4940,8 +4962,12 @@ $needsSetup = false; // Multi-account system handles setup automatically
                         api_key: apiKey,
                         provider: provider,
                         account_id: document.querySelector('input[name="account_id"]').value
-                    })
+                    }),
+                    signal: controller.signal
                 });
+                
+                clearTimeout(timeoutId);
+                clearTimeout(progressTimeoutId);
                 
                 const result = await response.json();
                 
