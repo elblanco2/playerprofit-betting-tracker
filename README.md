@@ -12,13 +12,13 @@ This tracker is built specifically for PlayerProfit's prop firm structure:
 
 ### **Standard Accounts**
 - **Account Sizes:** $1K, $5K, $10K, $25K, $50K, $100K  
-- **Risk Limits:** Min $10 | Max $50 per bet
+- **Risk Limits:** 1% - 5% of account balance per bet
 - **Phases:** Phase 1 → Phase 2 → Funded
 - **Requirements:** 20 picks minimum per phase
 
 ### **Pro Accounts** 
 - **Account Sizes:** $5K, $10K, $25K, $50K, $100K
-- **Risk Limits:** Min $100 | Max $500 per bet  
+- **Risk Limits:** 2% - 10% of account balance per bet  
 - **Phases:** Phase 1 → Phase 2 → Funded
 - **Requirements:** 20 picks minimum per phase
 

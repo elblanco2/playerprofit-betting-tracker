@@ -23,11 +23,13 @@ class PlayerProfitTracker {
     private $accountConfigs = [
         'Standard' => [
             'min_percentage' => 1.0, // 1% minimum
-            'max_risk' => 50 // Fixed maximum for Standard
+            'max_percentage' => 5.0, // 5% maximum
+            'daily_loss_limit' => 10.0 // 10% daily loss limit
         ],
         'Pro' => [
-            'min_percentage' => 2.0, // 2% minimum  
-            'max_risk' => 5000 // Fixed maximum for Pro (increased from 500)
+            'min_percentage' => 2.0, // 2% minimum
+            'max_percentage' => 10.0, // 10% maximum
+            'daily_loss_limit' => 10.0 // 10% daily loss limit
         ]
     ];
     
@@ -50,9 +52,7 @@ class PlayerProfitTracker {
         }
         
         $minRisk = ($balanceForCalculation * $config['min_percentage']) / 100;
-        
-        // Set more reasonable max limits based on account size and tier
-        $maxRisk = $this->getMaxRiskLimit($accountTier, $accountSize);
+        $maxRisk = ($balanceForCalculation * $config['max_percentage']) / 100;
         
         return [
             'min_risk' => round($minRisk, 2),
@@ -62,22 +62,6 @@ class PlayerProfitTracker {
         ];
     }
     
-    /**
-     * Calculate appropriate max risk limits
-     */
-    private function getMaxRiskLimit($accountTier, $accountSize) {
-        if ($accountTier === 'Standard') {
-            // Standard accounts: reasonable max based on size
-            if ($accountSize <= 5000) return 100;
-            if ($accountSize <= 10000) return 200;
-            if ($accountSize <= 25000) return 500;
-            return 1000; // For $100K Standard accounts
-        } else {
-            // Pro accounts: higher limits
-            if ($accountSize <= 50000) return 2500;
-            return 5000; // For $100K Pro accounts
-        }
-    }
     
     public function __construct($accountId = null) {
         $this->accountsFile = __DIR__ . '/data/accounts.json';
@@ -3299,7 +3283,7 @@ $needsSetup = false; // Multi-account system handles setup automatically
                                 <div class="feature">✅ Entry-level challenge</div>
                                 <div class="feature">✅ Lower risk requirements</div>
                                 <div class="feature">✅ Perfect for beginners</div>
-                                <div class="feature">💰 Risk: $10 - $50 per bet</div>
+                                <div class="feature">💰 Risk: 1% - 5% per bet</div>
                             </div>
                         </div>
                         <div class="account-type-card" data-tier="Pro">
@@ -3308,7 +3292,7 @@ $needsSetup = false; // Multi-account system handles setup automatically
                                 <div class="feature">✅ Advanced challenge</div>
                                 <div class="feature">✅ Higher potential returns</div>
                                 <div class="feature">✅ For experienced bettors</div>
-                                <div class="feature">💰 Risk: $100 - $5000 per bet</div>
+                                <div class="feature">💰 Risk: 2% - 10% per bet</div>
                             </div>
                         </div>
                     </div>
@@ -5297,7 +5281,7 @@ $needsSetup = false; // Multi-account system handles setup automatically
                         <strong>Phase 2 Target:</strong> $${(selectedSize * 1.44).toLocaleString()} (20% more profit)
                     </div>
                     <div class="summary-item">
-                        <strong>Risk Limits:</strong> ${selectedTier === 'Standard' ? '$10 - $50' : '$100 - $5,000'} per bet
+                        <strong>Risk Limits:</strong> ${selectedTier === 'Standard' ? '1% - 5%' : '2% - 10%'} of balance per bet
                     </div>
                 </div>
             `;
