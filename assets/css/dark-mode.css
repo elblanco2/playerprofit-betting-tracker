@@ -1,0 +1,564 @@
+/* Dark Mode Theme for PlayerProfit Betting Tracker */
+
+/* === DARK MODE VARIABLES === */
+:root[data-theme="dark"] {
+    --bg-primary: #0a0a0a;
+    --bg-secondary: #1a1a2e;
+    --bg-card: #16213e;
+    --bg-accent: #0f3460;
+    
+    --text-primary: #ffffff;
+    --text-secondary: #e0e0e0;
+    --text-muted: #b0b0b0;
+    --text-accent: #FFD700;
+    
+    --border-primary: rgba(255,255,255,0.1);
+    --border-secondary: rgba(255,255,255,0.05);
+    
+    --success-color: #4CAF50;
+    --warning-color: #FFC107;
+    --danger-color: #f44336;
+    --info-color: #2196F3;
+    
+    --shadow-light: rgba(0,0,0,0.3);
+    --shadow-heavy: rgba(0,0,0,0.5);
+    
+    --gradient-primary: linear-gradient(135deg, #FFD700, #FFA500);
+    --gradient-success: linear-gradient(135deg, #4CAF50, #8BC34A);
+    --gradient-danger: linear-gradient(135deg, #f44336, #FF5722);
+}
+
+:root[data-theme="light"] {
+    --bg-primary: #f5f5f5;
+    --bg-secondary: #ffffff;
+    --bg-card: #ffffff;
+    --bg-accent: #f8f9fa;
+    
+    --text-primary: #212121;
+    --text-secondary: #424242;
+    --text-muted: #757575;
+    --text-accent: #1976D2;
+    
+    --border-primary: rgba(0,0,0,0.12);
+    --border-secondary: rgba(0,0,0,0.06);
+    
+    --success-color: #4CAF50;
+    --warning-color: #FF9800;
+    --danger-color: #f44336;
+    --info-color: #2196F3;
+    
+    --shadow-light: rgba(0,0,0,0.1);
+    --shadow-heavy: rgba(0,0,0,0.2);
+    
+    --gradient-primary: linear-gradient(135deg, #2196F3, #1976D2);
+    --gradient-success: linear-gradient(135deg, #4CAF50, #388E3C);
+    --gradient-danger: linear-gradient(135deg, #f44336, #d32f2f);
+}
+
+/* === THEME TOGGLE BUTTON === */
+.theme-toggle {
+    position: fixed;
+    top: 20px;
+    right: 20px;
+    z-index: 1002;
+    background: var(--bg-card);
+    border: 2px solid var(--border-primary);
+    border-radius: 50px;
+    width: 60px;
+    height: 30px;
+    cursor: pointer;
+    transition: all 0.3s ease;
+    display: flex;
+    align-items: center;
+    padding: 3px;
+    box-shadow: 0 4px 15px var(--shadow-light);
+}
+
+.theme-toggle:hover {
+    border-color: var(--text-accent);
+    box-shadow: 0 6px 20px var(--shadow-heavy);
+}
+
+.theme-toggle-slider {
+    width: 24px;
+    height: 24px;
+    background: var(--gradient-primary);
+    border-radius: 50%;
+    transition: all 0.3s ease;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 12px;
+}
+
+[data-theme="dark"] .theme-toggle-slider {
+    transform: translateX(30px);
+}
+
+[data-theme="light"] .theme-toggle-slider {
+    transform: translateX(0);
+}
+
+/* === BASE BODY STYLES === */
+body {
+    background: var(--bg-primary);
+    color: var(--text-primary);
+    transition: all 0.3s ease;
+}
+
+/* === COMPREHENSIVE TEXT COLOR OVERRIDES === */
+h1, h2, h3, h4, h5, h6 {
+    color: var(--text-primary) !important;
+}
+
+p, span, div, td, th, li {
+    color: var(--text-primary);
+}
+
+/* Override hardcoded white text */
+[data-theme="light"] * {
+    color: var(--text-primary);
+}
+
+/* Specific overrides for white text */
+[data-theme="light"] .status-value,
+[data-theme="light"] .status-label,
+[data-theme="light"] .card-title,
+[data-theme="light"] .card-subtitle,
+[data-theme="light"] .nav-tab,
+[data-theme="light"] .account-tab,
+[data-theme="light"] .phase-badge,
+[data-theme="light"] small,
+[data-theme="light"] .progress-ring-subtitle {
+    color: var(--text-primary) !important;
+}
+
+/* Gradient text should remain visible */
+[data-theme="light"] h1 {
+    background: linear-gradient(45deg, #1976D2, #0D47A1);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+}
+
+/* Progress ring labels in light mode */
+[data-theme="light"] .progress-ring-label,
+[data-theme="light"] .gauge-label {
+    color: var(--text-primary) !important;
+}
+
+/* Table text */
+[data-theme="light"] .bets-table th,
+[data-theme="light"] .bets-table td {
+    color: var(--text-primary) !important;
+}
+
+/* Form elements and labels */
+[data-theme="light"] label,
+[data-theme="light"] .form-group label {
+    color: var(--text-primary) !important;
+}
+
+/* Status cards and values */
+[data-theme="light"] .status-card .status-value,
+[data-theme="light"] .status-card .status-label {
+    color: var(--text-primary) !important;
+}
+
+/* Navigation and tabs */
+[data-theme="light"] .nav-tabs .nav-tab {
+    color: var(--text-primary) !important;
+}
+
+/* Account information */
+[data-theme="light"] .account-info,
+[data-theme="light"] .account-info * {
+    color: var(--text-primary) !important;
+}
+
+/* Analytics section headers */
+[data-theme="light"] .analytics-section h3 {
+    color: var(--text-accent) !important;
+}
+
+/* All text with hardcoded colors */
+[data-theme="light"] [style*="color: white"],
+[data-theme="light"] [style*="color: #fff"],
+[data-theme="light"] [style*="color: #ffffff"] {
+    color: var(--text-primary) !important;
+}
+
+/* Discord output and code blocks */
+[data-theme="light"] .discord-output,
+[data-theme="light"] .discord-output pre {
+    color: var(--text-primary) !important;
+    background: var(--bg-accent) !important;
+}
+
+/* Violation alerts text */
+[data-theme="light"] .violation-alert,
+[data-theme="light"] .violation-alert * {
+    color: var(--text-primary) !important;
+}
+
+/* Phase badge text - keep some color contrast */
+[data-theme="light"] .phase-badge {
+    color: white !important; /* Keep white text on colored badges */
+}
+
+/* Overall total display */
+[data-theme="light"] .overall-total {
+    color: var(--text-primary) !important;
+}
+
+/* Heat map and calendar text */
+[data-theme="light"] .heatmap-day {
+    color: white !important; /* Keep white on colored backgrounds */
+}
+
+/* Gauge and progress text */
+[data-theme="light"] .progress-ring-value,
+[data-theme="light"] .gauge-value,
+[data-theme="light"] .gauge-title {
+    color: var(--text-primary) !important;
+}
+
+/* === ENHANCED CONTAINER === */
+.container {
+    background: var(--bg-secondary);
+    border: 1px solid var(--border-primary);
+    box-shadow: 0 8px 32px var(--shadow-heavy);
+}
+
+/* === ACCOUNT TABS DARK MODE === */
+.account-tabs {
+    background: var(--bg-accent);
+    border: 1px solid var(--border-primary);
+}
+
+.account-tab {
+    background: var(--bg-card);
+    border: 2px solid var(--border-secondary);
+    color: var(--text-secondary);
+}
+
+.account-tab:hover {
+    border-color: var(--text-accent);
+    box-shadow: 0 4px 15px var(--shadow-light);
+}
+
+.account-tab.active {
+    background: var(--gradient-primary);
+    color: var(--bg-primary);
+    border-color: var(--text-accent);
+}
+
+/* === NAVIGATION TABS === */
+.nav-tabs {
+    background: var(--bg-accent);
+    border-bottom: 2px solid var(--border-primary);
+}
+
+.nav-tab {
+    color: var(--text-secondary);
+    background: transparent;
+    border-bottom: 3px solid transparent;
+    transition: all 0.3s ease;
+}
+
+.nav-tab:hover {
+    background: var(--bg-card);
+    color: var(--text-primary);
+    border-bottom-color: var(--text-accent);
+}
+
+.nav-tab.active {
+    background: var(--gradient-primary);
+    color: var(--bg-primary);
+    border-bottom-color: var(--text-accent);
+}
+
+/* === TAB CONTENT === */
+.tab-content {
+    background: var(--bg-card);
+    border: 1px solid var(--border-primary);
+}
+
+/* === FORM ELEMENTS === */
+input, select, textarea {
+    background: var(--bg-accent);
+    color: var(--text-primary);
+    border: 2px solid var(--border-primary);
+    transition: all 0.3s ease;
+}
+
+input:focus, select:focus, textarea:focus {
+    border-color: var(--text-accent);
+    background: var(--bg-card);
+    box-shadow: 0 0 0 3px rgba(255, 215, 0, 0.1);
+}
+
+label {
+    color: var(--text-accent);
+}
+
+/* === BUTTONS === */
+.btn {
+    transition: all 0.3s ease;
+    border: none;
+    box-shadow: 0 4px 15px var(--shadow-light);
+}
+
+.btn-primary, .btn-add {
+    background: var(--gradient-primary);
+    color: var(--bg-primary);
+}
+
+.btn-primary:hover, .btn-add:hover {
+    transform: translateY(-3px);
+    box-shadow: 0 8px 25px var(--shadow-heavy);
+}
+
+.btn-success {
+    background: var(--gradient-success);
+    color: white;
+}
+
+.btn-danger, .btn-delete {
+    background: var(--gradient-danger);
+    color: white;
+}
+
+/* === STATUS CARDS === */
+.status-card {
+    background: var(--bg-card);
+    border: 1px solid var(--border-primary);
+    box-shadow: 0 4px 20px var(--shadow-light);
+}
+
+.status-card.balance {
+    background: linear-gradient(135deg, rgba(76,175,80,0.1), var(--bg-card));
+    border-color: var(--success-color);
+}
+
+.status-card.profit {
+    background: linear-gradient(135deg, rgba(33,150,243,0.1), var(--bg-card));
+    border-color: var(--info-color);
+}
+
+.status-card.risk {
+    background: linear-gradient(135deg, rgba(255,193,7,0.1), var(--bg-card));
+    border-color: var(--warning-color);
+}
+
+.status-card.violation {
+    background: linear-gradient(135deg, rgba(244,67,54,0.1), var(--bg-card));
+    border-color: var(--danger-color);
+}
+
+/* === TABLES === */
+.bets-table {
+    background: var(--bg-card);
+    border: 1px solid var(--border-primary);
+}
+
+.bets-table th {
+    background: var(--gradient-primary);
+    color: var(--bg-primary);
+}
+
+.bets-table td {
+    border-bottom: 1px solid var(--border-secondary);
+}
+
+.bets-table tr:hover {
+    background: var(--bg-accent);
+}
+
+/* === PARLAY SECTIONS === */
+.parlay-section {
+    background: var(--bg-accent);
+    border-left: 4px solid var(--text-accent);
+}
+
+.parlay-leg {
+    background: var(--bg-card);
+    border: 1px solid var(--border-primary);
+}
+
+.parlay-odds {
+    background: linear-gradient(135deg, rgba(76,175,80,0.2), var(--bg-accent));
+    color: var(--success-color);
+    border: 1px solid var(--success-color);
+}
+
+/* === DISCORD OUTPUT === */
+.discord-output {
+    background: var(--bg-card);
+    border: 2px solid var(--text-accent);
+    box-shadow: 0 4px 20px var(--shadow-light);
+}
+
+.discord-output pre {
+    color: var(--text-accent);
+}
+
+/* === OVERALL TOTAL === */
+.overall-total {
+    background: var(--bg-card);
+    border: 2px solid var(--border-primary);
+    box-shadow: 0 4px 20px var(--shadow-light);
+}
+
+.total-positive {
+    color: var(--success-color);
+    border-color: var(--success-color);
+    background: linear-gradient(135deg, rgba(76,175,80,0.1), var(--bg-card));
+}
+
+.total-negative {
+    color: var(--danger-color);
+    border-color: var(--danger-color);
+    background: linear-gradient(135deg, rgba(244,67,54,0.1), var(--bg-card));
+}
+
+/* === MESSAGES === */
+.message {
+    border-radius: 10px;
+    box-shadow: 0 4px 15px var(--shadow-light);
+}
+
+.message.success {
+    background: linear-gradient(135deg, rgba(76,175,80,0.1), var(--bg-card));
+    color: var(--success-color);
+    border: 1px solid var(--success-color);
+}
+
+/* === PROGRESS BARS === */
+.progress-bar {
+    background: var(--border-primary);
+    box-shadow: inset 0 2px 4px var(--shadow-light);
+}
+
+.progress-fill {
+    background: var(--gradient-success);
+    box-shadow: 0 2px 8px rgba(76, 175, 80, 0.3);
+}
+
+.progress-fill.danger {
+    background: var(--gradient-danger);
+    box-shadow: 0 2px 8px rgba(244, 67, 54, 0.3);
+}
+
+/* === VIOLATION ALERTS === */
+.violation-alert {
+    background: linear-gradient(135deg, rgba(244,67,54,0.1), var(--bg-card));
+    border: 1px solid var(--danger-color);
+    box-shadow: 0 4px 15px rgba(244, 67, 54, 0.2);
+}
+
+.violation-alert.warning {
+    background: linear-gradient(135deg, rgba(255,193,7,0.1), var(--bg-card));
+    border-color: var(--warning-color);
+    box-shadow: 0 4px 15px rgba(255, 193, 7, 0.2);
+}
+
+/* === PHASE BADGES === */
+.phase-badge {
+    box-shadow: 0 2px 8px var(--shadow-light);
+}
+
+.phase-1 {
+    background: var(--gradient-primary);
+    color: var(--bg-primary);
+}
+
+.phase-2 {
+    background: linear-gradient(135deg, var(--warning-color), #F57C00);
+    color: var(--bg-primary);
+}
+
+.funded {
+    background: var(--gradient-success);
+    color: white;
+}
+
+/* === TRANSITION ANIMATIONS === */
+* {
+    transition: background-color 0.3s ease, 
+                border-color 0.3s ease, 
+                color 0.3s ease,
+                box-shadow 0.3s ease;
+}
+
+/* === SCROLLBAR DARK MODE === */
+::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+}
+
+::-webkit-scrollbar-track {
+    background: var(--bg-accent);
+    border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb {
+    background: var(--border-primary);
+    border-radius: 4px;
+    transition: background 0.3s ease;
+}
+
+::-webkit-scrollbar-thumb:hover {
+    background: var(--text-accent);
+}
+
+/* === MOBILE DARK MODE ADJUSTMENTS === */
+@media (max-width: 768px) {
+    .theme-toggle {
+        top: 10px;
+        right: 70px;
+        width: 50px;
+        height: 25px;
+    }
+    
+    .theme-toggle-slider {
+        width: 21px;
+        height: 21px;
+        font-size: 10px;
+    }
+    
+    [data-theme="dark"] .theme-toggle-slider {
+        transform: translateX(25px);
+    }
+}
+
+/* === ENHANCED VISUAL EFFECTS === */
+@keyframes theme-transition {
+    0% { opacity: 0.8; }
+    50% { opacity: 0.9; }
+    100% { opacity: 1; }
+}
+
+body[data-transitioning] {
+    animation: theme-transition 0.3s ease;
+}
+
+/* === CUSTOM PROPERTIES FOR DYNAMIC THEMING === */
+.dynamic-bg {
+    background: var(--bg-card);
+}
+
+.dynamic-text {
+    color: var(--text-primary);
+}
+
+.dynamic-border {
+    border-color: var(--border-primary);
+}
+
+.dynamic-accent {
+    color: var(--text-accent);
+}
+
+.dynamic-shadow {
+    box-shadow: 0 4px 15px var(--shadow-light);
+}

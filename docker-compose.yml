@@ -1,0 +1,14 @@
+# Docker Compose file for PlayerProfit Betting Tracker
+
+services:
+  playerprofit-tracker:
+    build: .
+    ports:
+      - "8004:80"
+    volumes:
+      - .:/var/www/html
+      - ./data:/var/www/html/data
+    restart: unless-stopped
+    container_name: playerprofit-betting-tracker
+    environment:
+      - APACHE_DOCUMENT_ROOT=/var/www/html
