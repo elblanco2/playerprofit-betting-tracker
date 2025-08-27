@@ -22,6 +22,12 @@ This tracker is built specifically for PlayerProfit's prop firm structure:
 - **Phases:** Phase 1 → Phase 2 → Funded
 - **Requirements:** 20 picks minimum per phase
 
+### **💎 High Roller Account (Special)**
+- **Account Size:** $250K (Pro tier only)
+- **Risk Limits:** $5,000 - $25,000 per bet (2% - 10%)
+- **Availability:** Not typically available - requires acknowledgment
+- **Target:** $50,000 profit per phase (20%)
+
 ## 🚀 Quick Start
 
 ### **1. Start the Tracker**

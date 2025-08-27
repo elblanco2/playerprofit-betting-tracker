@@ -531,12 +531,24 @@ class PlayerProfitTracker {
         
         if ($config['current_phase'] === 'Phase 1') {
             $config['current_phase'] = 'Phase 2';
-            $config['phase_start_balance'] = $data['account_balance'];
-            $message = "Congratulations! Advanced to Phase 2";
+            // Reset to original account size for new Phase 2 account
+            $config['phase_start_balance'] = $config['account_size'];
+            // Reset account balance to starting balance (new account)
+            $data['account_balance'] = $config['account_size'];
+            // Reset highest balance tracking for new account
+            $config['highest_balance'] = $config['account_size'];
+            $this->saveData($data);
+            $message = "Congratulations! Advanced to Phase 2 - New account created with starting balance";
         } elseif ($config['current_phase'] === 'Phase 2') {
             $config['current_phase'] = 'Funded';
-            $config['phase_start_balance'] = $data['account_balance'];
-            $message = "Congratulations! Account is now FUNDED!";
+            // Reset to original account size for new Funded account
+            $config['phase_start_balance'] = $config['account_size'];
+            // Reset account balance to starting balance (new account)
+            $data['account_balance'] = $config['account_size'];
+            // Reset highest balance tracking for new account
+            $config['highest_balance'] = $config['account_size'];
+            $this->saveData($data);
+            $message = "Congratulations! Account is now FUNDED - New account created with starting balance";
         } else {
             $message = "Already at funded level";
         }
@@ -1584,19 +1596,55 @@ if (isset($_POST['action']) && $_POST['action'] === 'create_account') {
     // Temporarily create tracker to handle setup
     $setupTracker = new PlayerProfitTracker();
     
-    $tier = $_POST['tier'];
-    $size = intval($_POST['size']);
-    $customName = trim($_POST['custom_name']) ?: null;
-    
-    $accountId = $setupTracker->createAccount($tier, $size, $customName);
-    
-    if ($accountId) {
-        $_SESSION['current_account'] = $accountId;
-        $_SESSION['account_created'] = $accountId; // Track newly created account
-        header("Location: " . $_SERVER['PHP_SELF'] . "?account_created=" . urlencode($accountId));
-        exit;
+    if (isset($_POST['quantities']) && is_array($_POST['quantities'])) {
+        $createdAccounts = [];
+        $firstAccountId = null;
+        $totalAccountsToCreate = 0;
+        
+        // First, count total accounts to create
+        foreach ($_POST['quantities'] as $accountType => $quantity) {
+            $quantity = intval($quantity);
+            if ($quantity > 0) {
+                $totalAccountsToCreate += $quantity;
+            }
+        }
+        
+        if ($totalAccountsToCreate === 0) {
+            $setupError = "Please select at least one account by setting quantity > 0.";
+        } else {
+            // Create accounts based on quantities
+            foreach ($_POST['quantities'] as $accountType => $quantity) {
+                $quantity = intval($quantity);
+                if ($quantity > 0) {
+                    // Parse the account type (format: "Standard_5000" or "Pro_10000")
+                    list($tier, $size) = explode('_', $accountType);
+                    $size = intval($size);
+                    
+                    // Create the specified quantity of this account type
+                    for ($i = 1; $i <= $quantity; $i++) {
+                        $accountId = $setupTracker->createAccount($tier, $size);
+                        
+                        if ($accountId) {
+                            $createdAccounts[] = $accountId;
+                            if (!$firstAccountId) {
+                                $firstAccountId = $accountId; // Set the first account as default
+                            }
+                        }
+                    }
+                }
+            }
+            
+            if (!empty($createdAccounts)) {
+                $_SESSION['current_account'] = $firstAccountId;
+                $_SESSION['accounts_created'] = $createdAccounts; // Track all newly created accounts
+                header("Location: " . $_SERVER['PHP_SELF'] . "?accounts_created=1");
+                exit;
+            } else {
+                $setupError = "Failed to create accounts. Please try again.";
+            }
+        }
     } else {
-        $setupError = "Failed to create account. Please try again.";
+        $setupError = "Please select at least one account type.";
     }
 }
 
@@ -1609,14 +1657,22 @@ $tempTracker = new PlayerProfitTracker();
 $showSetupWizard = false;
 $showAccountCreated = false;
 
+
 if (isset($_GET['account_created'])) {
-    // Show account creation success page
+    // Show account creation success page (legacy single account)
     $showAccountCreated = true;
     $createdAccountId = $_GET['account_created'];
     $tracker = new PlayerProfitTracker($createdAccountId);
+} elseif (isset($_GET['accounts_created'])) {
+    // Show account creation success page (multiple accounts)
+    $showAccountCreated = true;
+    $createdAccounts = $_SESSION['accounts_created'] ?? [];
+    $firstAccountId = $_SESSION['current_account'] ?? null;
+    $tracker = new PlayerProfitTracker($firstAccountId);
 } elseif (($tempTracker->isFirstTimeSetup() || isset($_GET['create_another'])) && !isset($_GET['setup']) && !isset($_POST['action'])) {
     $showSetupWizard = true;
     $tracker = $tempTracker; // Use temp tracker for setup
+    error_log("Setup wizard should be shown: isFirstTimeSetup=" . ($tempTracker->isFirstTimeSetup() ? 'true' : 'false'));
 } else {
     $showSetupWizard = false;
     // Use proper account ID or fallback
@@ -2825,6 +2881,158 @@ $needsSetup = false; // Multi-account system handles setup automatically
             margin-right: 10px;
         }
         
+        /* Multiple Account Summary Styles */
+        .summary-header {
+            text-align: center;
+            margin-bottom: 30px;
+        }
+        
+        .summary-header h3 {
+            color: #FFD700;
+            font-size: 1.8em;
+            margin-bottom: 10px;
+        }
+        
+        .summary-header p {
+            color: #ccc;
+            font-size: 1.1em;
+        }
+        
+        .summary-accounts-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(350px, 1fr));
+            gap: 20px;
+            margin-top: 20px;
+        }
+        
+        .summary-account-card {
+            background: rgba(255, 255, 255, 0.05);
+            border: 1px solid rgba(255, 215, 0, 0.3);
+            border-radius: 12px;
+            padding: 20px;
+            transition: transform 0.3s ease, box-shadow 0.3s ease;
+        }
+        
+        .summary-account-card:hover {
+            transform: translateY(-5px);
+            box-shadow: 0 10px 30px rgba(255, 215, 0, 0.2);
+        }
+        
+        .summary-account-card h4 {
+            color: #FFD700;
+            margin-bottom: 15px;
+            text-align: center;
+            font-size: 1.3em;
+        }
+        
+        .account-summary-details .summary-item {
+            display: flex;
+            justify-content: space-between;
+            padding: 8px 0;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+        }
+        
+        .account-summary-details .summary-item:last-child {
+            border-bottom: none;
+        }
+        
+        @media (max-width: 768px) {
+            .summary-accounts-grid {
+                grid-template-columns: 1fr;
+            }
+        }
+        
+        /* Account Selection with Quantity Inputs */
+        .account-selection {
+            background: rgba(255, 255, 255, 0.05);
+            border: 2px solid rgba(255, 255, 255, 0.1);
+            border-radius: 12px;
+            padding: 20px;
+            transition: all 0.3s ease;
+            height: 100%;
+            display: flex;
+            flex-direction: column;
+            justify-content: space-between;
+        }
+        
+        .account-option.selected .account-selection {
+            border-color: #FFD700;
+            box-shadow: 0 0 15px rgba(255, 215, 0, 0.3);
+            background: rgba(255, 215, 0, 0.1);
+        }
+        
+        .account-info {
+            flex-grow: 1;
+        }
+        
+        .account-info .account-title {
+            color: #FFD700;
+            font-size: 1.2em;
+            font-weight: bold;
+            margin-bottom: 8px;
+            text-align: center;
+        }
+        
+        .account-info .account-details {
+            color: #ccc;
+            font-size: 0.9em;
+            margin-bottom: 5px;
+            text-align: center;
+        }
+        
+        .account-info .account-target {
+            color: #90EE90;
+            font-size: 0.85em;
+            text-align: center;
+        }
+        
+        .quantity-selector {
+            margin-top: 15px;
+            padding-top: 15px;
+            border-top: 1px solid rgba(255, 255, 255, 0.1);
+            text-align: center;
+        }
+        
+        .quantity-selector label {
+            color: white;
+            font-size: 0.9em;
+            margin-bottom: 5px;
+            display: block;
+        }
+        
+        .quantity-input {
+            width: 60px;
+            padding: 8px;
+            background: rgba(0, 0, 0, 0.4);
+            border: 2px solid rgba(255, 255, 255, 0.2);
+            border-radius: 6px;
+            color: white;
+            text-align: center;
+            font-size: 1em;
+            font-weight: bold;
+            transition: all 0.3s ease;
+        }
+        
+        .quantity-input:focus {
+            outline: none;
+            border-color: #FFD700;
+            box-shadow: 0 0 10px rgba(255, 215, 0, 0.3);
+        }
+        
+        .quantity-input:invalid {
+            border-color: #ff6b6b;
+        }
+        
+        @media (max-width: 768px) {
+            .account-grid {
+                grid-template-columns: 1fr;
+            }
+            
+            .account-selection {
+                padding: 15px;
+            }
+        }
+        
         .setup-wizard-actions {
             display: flex;
             justify-content: space-between;
@@ -3260,6 +3468,7 @@ $needsSetup = false; // Multi-account system handles setup automatically
     <!-- Setup Wizard for First-Time Users -->
     <div class="setup-wizard-overlay">
         <div class="setup-wizard-container">
+            
             <div class="setup-wizard-header">
                 <h1>🏆 Welcome to PlayerProfit Tracker v2.0</h1>
                 <p>Let's set up your first PlayerProfit account to get started</p>
@@ -3275,48 +3484,218 @@ $needsSetup = false; // Multi-account system handles setup automatically
                 <input type="hidden" name="action" value="create_account">
                 
                 <div class="setup-step active" data-step="1">
-                    <h2>Step 1: Choose Account Type</h2>
-                    <div class="account-type-grid">
-                        <div class="account-type-card" data-tier="Standard">
-                            <h3>📊 Standard Account</h3>
-                            <div class="account-features">
-                                <div class="feature">✅ Entry-level challenge</div>
-                                <div class="feature">✅ Lower risk requirements</div>
-                                <div class="feature">✅ Perfect for beginners</div>
-                                <div class="feature">💰 Risk: 1% - 5% per bet</div>
+                    <h2>Step 1: Select Your PlayerProfit Accounts</h2>
+                    <p class="step-description">Choose which account types and sizes you want to track. You can select multiple accounts.</p>
+                    
+                    <div class="account-selection-grid">
+                        <div class="tier-section">
+                            <h3>📊 Standard Accounts</h3>
+                            <p class="tier-description">Risk: 1% - 5% per bet | Entry-level challenge</p>
+                            <div class="account-grid">
+                                <div class="account-option" data-tier="Standard" data-size="1000">
+                                    <div class="account-selection">
+                                        <div class="account-info">
+                                            <div class="account-title">$1K Standard</div>
+                                            <div class="account-details">Min: $10 | Max: $50</div>
+                                            <div class="account-target">Each Phase: $200 profit (20%)</div>
+                                        </div>
+                                        <div class="quantity-selector">
+                                            <label for="qty_std_1k">Quantity:</label>
+                                            <input type="number" id="qty_std_1k" name="quantities[Standard_1000]" min="0" max="10" value="0" class="quantity-input">
+                                        </div>
+                                    </div>
+                                </div>
+                                
+                                <div class="account-option" data-tier="Standard" data-size="5000">
+                                    <div class="account-selection">
+                                        <div class="account-info">
+                                            <div class="account-title">$5K Standard</div>
+                                            <div class="account-details">Min: $50 | Max: $250</div>
+                                            <div class="account-target">Each Phase: $1,000 profit (20%)</div>
+                                        </div>
+                                        <div class="quantity-selector">
+                                            <label for="qty_std_5k">Quantity:</label>
+                                            <input type="number" id="qty_std_5k" name="quantities[Standard_5000]" min="0" max="10" value="0" class="quantity-input">
+                                        </div>
+                                    </div>
+                                </div>
+                                
+                                <div class="account-option" data-tier="Standard" data-size="10000">
+                                    <div class="account-selection">
+                                        <div class="account-info">
+                                            <div class="account-title">$10K Standard</div>
+                                            <div class="account-details">Min: $100 | Max: $500</div>
+                                            <div class="account-target">Each Phase: $2,000 profit (20%)</div>
+                                        </div>
+                                        <div class="quantity-selector">
+                                            <label for="qty_std_10k">Quantity:</label>
+                                            <input type="number" id="qty_std_10k" name="quantities[Standard_10000]" min="0" max="10" value="0" class="quantity-input">
+                                        </div>
+                                    </div>
+                                </div>
+                                
+                                <div class="account-option" data-tier="Standard" data-size="25000">
+                                    <div class="account-selection">
+                                        <div class="account-info">
+                                            <div class="account-title">$25K Standard</div>
+                                            <div class="account-details">Min: $250 | Max: $1,250</div>
+                                            <div class="account-target">Each Phase: $5,000 profit (20%)</div>
+                                        </div>
+                                        <div class="quantity-selector">
+                                            <label for="qty_std_25k">Quantity:</label>
+                                            <input type="number" id="qty_std_25k" name="quantities[Standard_25000]" min="0" max="10" value="0" class="quantity-input">
+                                        </div>
+                                    </div>
+                                </div>
+                                
+                                <div class="account-option" data-tier="Standard" data-size="50000">
+                                    <div class="account-selection">
+                                        <div class="account-info">
+                                            <div class="account-title">$50K Standard</div>
+                                            <div class="account-details">Min: $500 | Max: $2,500</div>
+                                            <div class="account-target">Each Phase: $10,000 profit (20%)</div>
+                                        </div>
+                                        <div class="quantity-selector">
+                                            <label for="qty_std_50k">Quantity:</label>
+                                            <input type="number" id="qty_std_50k" name="quantities[Standard_50000]" min="0" max="10" value="0" class="quantity-input">
+                                        </div>
+                                    </div>
+                                </div>
+                                
+                                <div class="account-option" data-tier="Standard" data-size="100000">
+                                    <div class="account-selection">
+                                        <div class="account-info">
+                                            <div class="account-title">$100K Standard</div>
+                                            <div class="account-details">Min: $1,000 | Max: $5,000</div>
+                                            <div class="account-target">Each Phase: $20,000 profit (20%)</div>
+                                        </div>
+                                        <div class="quantity-selector">
+                                            <label for="qty_std_100k">Quantity:</label>
+                                            <input type="number" id="qty_std_100k" name="quantities[Standard_100000]" min="0" max="10" value="0" class="quantity-input">
+                                        </div>
+                                    </div>
+                                </div>
                             </div>
                         </div>
-                        <div class="account-type-card" data-tier="Pro">
-                            <h3>🚀 Pro Account</h3>
-                            <div class="account-features">
-                                <div class="feature">✅ Advanced challenge</div>
-                                <div class="feature">✅ Higher potential returns</div>
-                                <div class="feature">✅ For experienced bettors</div>
-                                <div class="feature">💰 Risk: 2% - 10% per bet</div>
+                        
+                        <div class="tier-section">
+                            <h3>🚀 Pro Accounts</h3>
+                            <p class="tier-description">Risk: 2% - 10% per bet | Advanced challenge</p>
+                            <div class="account-grid">
+                                <div class="account-option" data-tier="Pro" data-size="5000">
+                                    <div class="account-selection">
+                                        <div class="account-info">
+                                            <div class="account-title">$5K Pro</div>
+                                            <div class="account-details">Min: $100 | Max: $500</div>
+                                            <div class="account-target">Each Phase: $1,000 profit (20%)</div>
+                                        </div>
+                                        <div class="quantity-selector">
+                                            <label for="qty_pro_5k">Quantity:</label>
+                                            <input type="number" id="qty_pro_5k" name="quantities[Pro_5000]" min="0" max="10" value="0" class="quantity-input">
+                                        </div>
+                                    </div>
+                                </div>
+                                
+                                <div class="account-option" data-tier="Pro" data-size="10000">
+                                    <div class="account-selection">
+                                        <div class="account-info">
+                                            <div class="account-title">$10K Pro</div>
+                                            <div class="account-details">Min: $200 | Max: $1,000</div>
+                                            <div class="account-target">Each Phase: $2,000 profit (20%)</div>
+                                        </div>
+                                        <div class="quantity-selector">
+                                            <label for="qty_pro_10k">Quantity:</label>
+                                            <input type="number" id="qty_pro_10k" name="quantities[Pro_10000]" min="0" max="10" value="0" class="quantity-input">
+                                        </div>
+                                    </div>
+                                </div>
+                                
+                                <div class="account-option" data-tier="Pro" data-size="25000">
+                                    <div class="account-selection">
+                                        <div class="account-info">
+                                            <div class="account-title">$25K Pro</div>
+                                            <div class="account-details">Min: $500 | Max: $2,500</div>
+                                            <div class="account-target">Each Phase: $5,000 profit (20%)</div>
+                                        </div>
+                                        <div class="quantity-selector">
+                                            <label for="qty_pro_25k">Quantity:</label>
+                                            <input type="number" id="qty_pro_25k" name="quantities[Pro_25000]" min="0" max="10" value="0" class="quantity-input">
+                                        </div>
+                                    </div>
+                                </div>
+                                
+                                <div class="account-option" data-tier="Pro" data-size="50000">
+                                    <div class="account-selection">
+                                        <div class="account-info">
+                                            <div class="account-title">$50K Pro</div>
+                                            <div class="account-details">Min: $1,000 | Max: $5,000</div>
+                                            <div class="account-target">Each Phase: $10,000 profit (20%)</div>
+                                        </div>
+                                        <div class="quantity-selector">
+                                            <label for="qty_pro_50k">Quantity:</label>
+                                            <input type="number" id="qty_pro_50k" name="quantities[Pro_50000]" min="0" max="10" value="0" class="quantity-input">
+                                        </div>
+                                    </div>
+                                </div>
+                                
+                                <div class="account-option" data-tier="Pro" data-size="100000">
+                                    <div class="account-selection">
+                                        <div class="account-info">
+                                            <div class="account-title">$100K Pro</div>
+                                            <div class="account-details">Min: $2,000 | Max: $10,000</div>
+                                            <div class="account-target">Each Phase: $20,000 profit (20%)</div>
+                                        </div>
+                                        <div class="quantity-selector">
+                                            <label for="qty_pro_100k">Quantity:</label>
+                                            <input type="number" id="qty_pro_100k" name="quantities[Pro_100000]" min="0" max="10" value="0" class="quantity-input">
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                            
+                            <!-- Custom High Roller Account Section -->
+                            <div class="custom-account-section" style="margin-top: 30px; padding-top: 30px; border-top: 2px solid #333;">
+                                <div class="custom-section-header">
+                                    <h3 style="color: #ffd700; text-align: center; margin-bottom: 15px;">
+                                        💎 High Roller Account
+                                    </h3>
+                                    <p style="text-align: center; color: #888; font-size: 14px; margin-bottom: 20px;">
+                                        Exclusive account size not typically available - requires acknowledgment
+                                    </p>
+                                </div>
+                                
+                                <div class="account-option account-option-custom" data-tier="Pro" data-size="250000" style="border: 2px solid #ffd700; background: rgba(255, 215, 0, 0.05);">
+                                    <div class="account-selection">
+                                        <div class="account-info">
+                                            <div class="account-title" style="color: #ffd700;">$250K Pro 💎</div>
+                                            <div class="account-details" style="color: #ffd700;">Min: $5,000 | Max: $25,000</div>
+                                            <div class="account-target" style="color: #ffd700;">Each Phase: $50,000 profit (20%)</div>
+                                            <div class="account-warning" style="color: #ff6b6b; font-size: 12px; margin-top: 5px; font-weight: bold;">
+                                                ⚠️ High Roller Account - Not typically available
+                                            </div>
+                                        </div>
+                                        <div class="quantity-selector">
+                                            <label for="qty_pro_250k" style="color: #ffd700;">Quantity:</label>
+                                            <input type="number" id="qty_pro_250k" name="quantities[Pro_250000]" min="0" max="3" value="0" class="quantity-input quantity-custom" disabled>
+                                        </div>
+                                    </div>
+                                </div>
+                                
+                                <div class="custom-acknowledgment" style="margin-top: 15px; text-align: center;">
+                                    <label class="custom-checkbox-container" style="display: inline-flex; align-items: center; color: #888; font-size: 14px; cursor: pointer;">
+                                        <input type="checkbox" id="acknowledge-custom" style="margin-right: 8px;">
+                                        <span>I acknowledge this $250K account is not typically available and may have special requirements</span>
+                                    </label>
+                                </div>
                             </div>
                         </div>
                     </div>
                 </div>
                 
                 <div class="setup-step" data-step="2">
-                    <h2>Step 2: Select Account Size</h2>
-                    <div class="account-sizes" id="account-sizes">
-                        <!-- Account sizes will be populated by JavaScript based on tier selection -->
-                    </div>
-                </div>
-                
-                <div class="setup-step" data-step="3">
-                    <h2>Step 3: Account Details</h2>
-                    <div class="form-group">
-                        <label for="custom_name">Custom Account Name (Optional)</label>
-                        <input type="text" name="custom_name" id="custom_name" 
-                               placeholder="e.g., My First Challenge" 
-                               maxlength="50">
-                        <small>Leave blank to use default name based on tier and size</small>
-                    </div>
-                    
-                    <div class="setup-summary" id="setup-summary">
-                        <!-- Summary will be populated by JavaScript -->
+                    <h2>Step 2: Review Your Selection</h2>
+                    <div class="selected-accounts-summary" id="selected-accounts-summary">
+                        <!-- Selected accounts will be populated by JavaScript -->
                     </div>
                 </div>
                 
@@ -3332,9 +3711,7 @@ $needsSetup = false; // Multi-account system handles setup automatically
                     </button>
                 </div>
                 
-                <!-- Hidden form fields for final submission -->
-                <input type="hidden" name="tier" id="selected-tier">
-                <input type="hidden" name="size" id="selected-size">
+                <!-- Form data is handled by accounts[] checkboxes -->
             </form>
         </div>
     </div>
@@ -3739,7 +4116,7 @@ $needsSetup = false; // Multi-account system handles setup automatically
                     
                     <form method="POST" action="">
                         <input type="hidden" name="action" value="import_csv_paste">
-                        <input type="hidden" name="account_id" value="<?= htmlspecialchars($currentAccountId) ?>">
+                        <input type="hidden" name="account_id" value="<?= htmlspecialchars($currentAccountId ?? '') ?>">
                         
                         <div class="form-group">
                             <label for="csv-data">CSV Data:</label>
@@ -3787,7 +4164,7 @@ $needsSetup = false; // Multi-account system handles setup automatically
                     
                     <form method="POST" action="" enctype="multipart/form-data">
                         <input type="hidden" name="action" value="import_csv_file">
-                        <input type="hidden" name="account_id" value="<?= htmlspecialchars($currentAccountId) ?>">
+                        <input type="hidden" name="account_id" value="<?= htmlspecialchars($currentAccountId ?? '') ?>">
                         
                         <div class="form-group">
                             <label for="csv-file">Select CSV File:</label>
@@ -3848,12 +4225,12 @@ $needsSetup = false; // Multi-account system handles setup automatically
                             <code style="background: rgba(0,0,0,0.3); padding: 2px 6px; border-radius: 3px;">Date,Sport,Selection,Stake,Odds,Result</code>
                         </p>
                         <div style="background: rgba(76,175,80,0.1); border: 1px solid #4CAF50; border-radius: 6px; padding: 10px; margin-bottom: 15px;">
-                            <small style="color: #4CAF50;">📊 Importing to Account: <strong><?= htmlspecialchars($currentAccountId) ?></strong></small>
+                            <small style="color: #4CAF50;">📊 Importing to Account: <strong><?= htmlspecialchars($currentAccountId ?? '') ?></strong></small>
                         </div>
                         
                         <form method="POST" action="" style="margin-bottom: 20px;">
                             <input type="hidden" name="action" value="import_csv_paste">
-                            <input type="hidden" name="account_id" value="<?= htmlspecialchars($currentAccountId) ?>">
+                            <input type="hidden" name="account_id" value="<?= htmlspecialchars($currentAccountId ?? '') ?>">
                             
                             <div class="form-group">
                                 <label for="csv-data">CSV Data:</label>
@@ -3882,12 +4259,12 @@ $needsSetup = false; // Multi-account system handles setup automatically
                             Upload a CSV file exported from PlayerProfit or your own tracking system.
                         </p>
                         <div style="background: rgba(76,175,80,0.1); border: 1px solid #4CAF50; border-radius: 6px; padding: 10px; margin-bottom: 15px;">
-                            <small style="color: #4CAF50;">📊 Importing to Account: <strong><?= htmlspecialchars($currentAccountId) ?></strong></small>
+                            <small style="color: #4CAF50;">📊 Importing to Account: <strong><?= htmlspecialchars($currentAccountId ?? '') ?></strong></small>
                         </div>
                         
                         <form method="POST" action="" enctype="multipart/form-data">
                             <input type="hidden" name="action" value="import_csv_file">
-                            <input type="hidden" name="account_id" value="<?= htmlspecialchars($currentAccountId) ?>">
+                            <input type="hidden" name="account_id" value="<?= htmlspecialchars($currentAccountId ?? '') ?>">
                             
                             <div class="form-group">
                                 <label for="csv-file">Select CSV File:</label>
@@ -4840,7 +5217,7 @@ $needsSetup = false; // Multi-account system handles setup automatically
             <div id="chat-api-config" class="chat-api-config" style="display: none;">
                 <form method="POST" action="" style="padding: 15px; background: rgba(0,0,0,0.2);">
                     <input type="hidden" name="action" value="store_api_key">
-                    <input type="hidden" name="account_id" value="<?= htmlspecialchars($currentAccountId) ?>">
+                    <input type="hidden" name="account_id" value="<?= htmlspecialchars($currentAccountId ?? '') ?>">
                     
                     <div style="margin-bottom: 10px;">
                         <label style="display: block; font-size: 11px; color: #ccc; margin-bottom: 4px;">AI Provider:</label>
@@ -4912,8 +5289,9 @@ $needsSetup = false; // Multi-account system handles setup automatically
             </div>
         </div>
     </div>
+<?php endif; ?>
 
-    <!-- Enhanced Dashboard Components -->
+<!-- Enhanced Dashboard Components -->
     <script src="assets/js/dashboard-enhanced.js?v=<?= time() ?>"></script>
     <script src="assets/js/form-enhanced.js"></script>
     
@@ -4999,7 +5377,7 @@ $needsSetup = false; // Multi-account system handles setup automatically
                 const formData = new URLSearchParams({
                     action: 'chat_with_llm_ajax',
                     user_message: message,
-                    account_id: '<?= htmlspecialchars($currentAccountId) ?>'
+                    account_id: '<?= htmlspecialchars($currentAccountId ?? '') ?>'
                 });
                 
                 console.log('Sending request:', formData.toString()); // Debug log
@@ -5133,7 +5511,7 @@ $needsSetup = false; // Multi-account system handles setup automatically
             const accountInput = document.createElement('input');
             accountInput.type = 'hidden';
             accountInput.name = 'account_id';
-            accountInput.value = '<?= htmlspecialchars($currentAccountId) ?>';
+            accountInput.value = '<?= htmlspecialchars($currentAccountId ?? '') ?>';
             
             const csvInput = document.createElement('input');
             csvInput.type = 'hidden';
@@ -5171,131 +5549,229 @@ $needsSetup = false; // Multi-account system handles setup automatically
             }
         }
         
-        <?php if ($showSetupWizard): ?>
-        // Setup Wizard JavaScript
-        const accountTypes = <?= json_encode($tracker->getAvailableAccountTypes()) ?>;
         
-        let currentStep = 1;
-        let selectedTier = '';
-        let selectedSize = 0;
+        // Setup Wizard JavaScript - Quantity-based Account Selection (conditional execution)
+        if (document.getElementById('setup-next-btn')) {
+            let currentStep = 1;
+            let selectedAccounts = [];
         
-        // Account type selection
-        document.querySelectorAll('.account-type-card').forEach(card => {
-            card.addEventListener('click', function() {
-                document.querySelectorAll('.account-type-card').forEach(c => c.classList.remove('selected'));
-                this.classList.add('selected');
-                selectedTier = this.dataset.tier;
-                document.getElementById('selected-tier').value = selectedTier;
-                updateNextButton();
-            });
-        });
-        
-        // Step navigation
-        document.getElementById('setup-next-btn').addEventListener('click', function() {
-            if (currentStep === 1) {
-                if (selectedTier) {
-                    showStep(2);
-                    populateAccountSizes();
-                } else {
-                    alert('Please select an account type');
-                }
-            } else if (currentStep === 2) {
-                if (selectedSize > 0) {
-                    showStep(3);
-                    updateSummary();
-                } else {
-                    alert('Please select an account size');
-                }
-            }
-        });
-        
-        document.getElementById('setup-prev-btn').addEventListener('click', function() {
-            if (currentStep === 2) {
-                showStep(1);
-            } else if (currentStep === 3) {
-                showStep(2);
-            }
-        });
-        
-        function showStep(step) {
-            document.querySelectorAll('.setup-step').forEach(s => s.classList.remove('active'));
-            document.querySelector(`[data-step="${step}"]`).classList.add('active');
-            
-            currentStep = step;
-            
-            // Update buttons
-            document.getElementById('setup-prev-btn').style.display = step > 1 ? 'inline-block' : 'none';
-            document.getElementById('setup-next-btn').style.display = step < 3 ? 'inline-block' : 'none';
-            document.getElementById('setup-create-btn').style.display = step === 3 ? 'inline-block' : 'none';
-        }
-        
-        function populateAccountSizes() {
-            const container = document.getElementById('account-sizes');
-            const sizes = accountTypes[selectedTier];
-            
-            container.innerHTML = sizes.map(size => `
-                <div class="account-size-card" data-size="${size.size}">
-                    <h3>${size.display}</h3>
-                    <div class="size-cost">${size.cost}</div>
-                    <div class="size-features">
-                        <div>💰 Account Balance: ${size.display}</div>
-                        <div>🎯 Phase 1 Target: $${(size.size * 1.2).toLocaleString()}</div>
-                        <div>🏆 Phase 2 Target: $${(size.size * 1.44).toLocaleString()}</div>
-                    </div>
-                </div>
-            `).join('');
-            
-            // Add click handlers
-            document.querySelectorAll('.account-size-card').forEach(card => {
-                card.addEventListener('click', function() {
-                    document.querySelectorAll('.account-size-card').forEach(c => c.classList.remove('selected'));
-                    this.classList.add('selected');
-                    selectedSize = parseInt(this.dataset.size);
-                    document.getElementById('selected-size').value = selectedSize;
-                    updateNextButton();
+            // Wait for DOM to load
+            document.addEventListener('DOMContentLoaded', function() {
+                // Quantity input change handlers
+                const quantityInputs = document.querySelectorAll('.quantity-input');
+                
+                quantityInputs.forEach(input => {
+                    input.addEventListener('input', function() {
+                        updateSelectedAccounts();
+                        updateStepButtonVisibility();
+                        updateQuantityHighlights();
+                    });
                 });
+                
+                // Custom account acknowledgment handler
+                const acknowledgeCheckbox = document.getElementById('acknowledge-custom');
+                const customQuantityInput = document.getElementById('qty_pro_250k');
+                
+                if (acknowledgeCheckbox && customQuantityInput) {
+                    acknowledgeCheckbox.addEventListener('change', function() {
+                        if (this.checked) {
+                            customQuantityInput.disabled = false;
+                            customQuantityInput.style.opacity = '1';
+                        } else {
+                            customQuantityInput.disabled = true;
+                            customQuantityInput.value = '0';
+                            customQuantityInput.style.opacity = '0.5';
+                            // Trigger update when disabling
+                            updateSelectedAccounts();
+                            updateStepButtonVisibility();
+                            updateQuantityHighlights();
+                        }
+                    });
+                    
+                    // Initialize state
+                    customQuantityInput.disabled = true;
+                    customQuantityInput.style.opacity = '0.5';
+                }
+                
+                // Step navigation
+                const nextBtn = document.getElementById('setup-next-btn');
+                const prevBtn = document.getElementById('setup-prev-btn');
+                
+                if (nextBtn) {
+                    nextBtn.addEventListener('click', function(e) {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        
+                        if (currentStep === 1) {
+                            if (selectedAccounts.length > 0) {
+                                showStep(2);
+                                updateAccountSummary();
+                            } else {
+                                alert('Please select at least one account by setting quantity > 0.');
+                            }
+                        }
+                    });
+                }
+                
+                if (prevBtn) {
+                    prevBtn.addEventListener('click', function(e) {
+                        e.preventDefault();
+                        
+                        if (currentStep === 2) {
+                            showStep(1);
+                        }
+                    });
+                }
+                
+                // Initialize on page load
+                updateSelectedAccounts();
+                updateStepButtonVisibility();
             });
-        }
         
-        function updateSummary() {
-            const summary = document.getElementById('setup-summary');
-            const customName = document.getElementById('custom_name').value;
-            const defaultName = `${selectedTier} $${(selectedSize / 1000)}K`;
-            
-            summary.innerHTML = `
-                <div class="summary-card">
-                    <h3>📋 Account Summary</h3>
-                    <div class="summary-item">
-                        <strong>Account Type:</strong> ${selectedTier}
-                    </div>
-                    <div class="summary-item">
-                        <strong>Account Size:</strong> $${selectedSize.toLocaleString()}
-                    </div>
-                    <div class="summary-item">
-                        <strong>Account Name:</strong> ${customName || defaultName}
-                    </div>
-                    <div class="summary-item">
-                        <strong>Phase 1 Target:</strong> $${(selectedSize * 1.2).toLocaleString()} (20% profit)
-                    </div>
-                    <div class="summary-item">
-                        <strong>Phase 2 Target:</strong> $${(selectedSize * 1.44).toLocaleString()} (20% more profit)
-                    </div>
-                    <div class="summary-item">
-                        <strong>Risk Limits:</strong> ${selectedTier === 'Standard' ? '1% - 5%' : '2% - 10%'} of balance per bet
-                    </div>
-                </div>
-            `;
-        }
-        
-        function updateNextButton() {
-            const nextBtn = document.getElementById('setup-next-btn');
-            if (currentStep === 1) {
-                nextBtn.disabled = !selectedTier;
-            } else if (currentStep === 2) {
-                nextBtn.disabled = !selectedSize;
+            function updateSelectedAccounts() {
+                selectedAccounts = [];
+                const inputs = document.querySelectorAll('.quantity-input');
+                
+                inputs.forEach(input => {
+                    const quantity = parseInt(input.value) || 0;
+                    
+                    if (quantity > 0) {
+                        const accountType = input.name.match(/quantities\[(.*?)\]/)[1];
+                        const [tier, size] = accountType.split('_');
+                        const accountTitle = input.closest('.account-option').querySelector('.account-title');
+                        
+                        // Add each instance of this account type
+                        for (let i = 1; i <= quantity; i++) {
+                            selectedAccounts.push({
+                                accountType: accountType,
+                                tier: tier,
+                                size: parseInt(size),
+                                quantity: quantity,
+                                instance: i,
+                                display: accountTitle ? accountTitle.textContent : `${tier} $${parseInt(size)/1000}K`
+                            });
+                        }
+                    }
+                });
             }
-        }
-        <?php endif; ?>
+            
+            function updateQuantityHighlights() {
+                document.querySelectorAll('.account-option').forEach(option => {
+                    const input = option.querySelector('.quantity-input');
+                    const quantity = parseInt(input.value) || 0;
+                    
+                    if (quantity > 0) {
+                        option.classList.add('selected');
+                    } else {
+                        option.classList.remove('selected');
+                    }
+                });
+            }
+            
+            function updateStepButtonVisibility() {
+                const nextBtn = document.getElementById('setup-next-btn');
+                const createBtn = document.getElementById('setup-create-btn');
+                
+                if (nextBtn && currentStep === 1) {
+                    nextBtn.disabled = selectedAccounts.length === 0;
+                }
+                if (createBtn && currentStep === 2) {
+                    createBtn.disabled = selectedAccounts.length === 0;
+                }
+            }
+            
+            function showStep(step) {
+                document.querySelectorAll('.setup-step').forEach(s => s.classList.remove('active'));
+                const targetStep = document.querySelector(`[data-step="${step}"]`);
+                if (targetStep) {
+                    targetStep.classList.add('active');
+                }
+                
+                currentStep = step;
+                
+                // Update button visibility
+                const prevBtn = document.getElementById('setup-prev-btn');
+                const nextBtn = document.getElementById('setup-next-btn');
+                const createBtn = document.getElementById('setup-create-btn');
+                
+                if (prevBtn) prevBtn.style.display = step > 1 ? 'inline-block' : 'none';
+                if (nextBtn) nextBtn.style.display = step === 1 ? 'inline-block' : 'none';
+                if (createBtn) createBtn.style.display = step === 2 ? 'inline-block' : 'none';
+                
+                updateStepButtonVisibility();
+            }
+            
+            function updateAccountSummary() {
+                const summary = document.getElementById('selected-accounts-summary');
+                if (!summary) return;
+                
+                if (selectedAccounts.length === 0) {
+                    summary.innerHTML = '<p>No accounts selected.</p>';
+                    return;
+                }
+                
+                // Group accounts by type and count quantities
+                const accountGroups = {};
+                selectedAccounts.forEach(account => {
+                    const key = account.accountType;
+                    if (!accountGroups[key]) {
+                        accountGroups[key] = {
+                            ...account,
+                            count: 0
+                        };
+                    }
+                    accountGroups[key].count++;
+                });
+                
+                const accountCards = Object.values(accountGroups).map(group => {
+                    const riskLimits = group.tier === 'Standard' ? '1% - 5%' : '2% - 10%';
+                    const phase1Target = (group.size * 1.2).toLocaleString();
+                    const phase2Target = (group.size * 1.44).toLocaleString();
+                    const totalValue = (group.size * group.count).toLocaleString();
+                    
+                    return `
+                        <div class="summary-account-card">
+                            <h4>${group.display} ${group.count > 1 ? `(×${group.count})` : ''}</h4>
+                            <div class="account-summary-details">
+                                <div class="summary-item">
+                                    <strong>Quantity:</strong> ${group.count} account${group.count > 1 ? 's' : ''}
+                                </div>
+                                <div class="summary-item">
+                                    <strong>Size Each:</strong> $${group.size.toLocaleString()}
+                                </div>
+                                <div class="summary-item">
+                                    <strong>Total Value:</strong> $${totalValue}
+                                </div>
+                                <div class="summary-item">
+                                    <strong>Risk Limits:</strong> ${riskLimits} per bet
+                                </div>
+                                <div class="summary-item">
+                                    <strong>Phase 1 Target:</strong> $${phase1Target} each
+                                </div>
+                                <div class="summary-item">
+                                    <strong>Phase 2 Target:</strong> $${phase2Target} each
+                                </div>
+                            </div>
+                        </div>
+                    `;
+                }).join('');
+                
+                const totalAccounts = selectedAccounts.length;
+                const uniqueTypes = Object.keys(accountGroups).length;
+                
+                summary.innerHTML = `
+                    <div class="summary-header">
+                        <h3>📋 Your Account Selection</h3>
+                        <p><strong>${totalAccounts} total accounts</strong> across ${uniqueTypes} different type${uniqueTypes > 1 ? 's' : ''}</p>
+                        <p>Review your selection below. You can go back to make changes or create these accounts.</p>
+                    </div>
+                    <div class="summary-accounts-grid">
+                        ${accountCards}
+                    </div>
+                `;
+            }
+        
+        } // End setup wizard JavaScript
         
         <?php if ($showAccountCreated): ?>
         // Account Created Page JavaScript
@@ -5305,6 +5781,5 @@ $needsSetup = false; // Multi-account system handles setup automatically
         }
         <?php endif; ?>
     </script>
-<?php endif; ?>
 </body>
 </html>
