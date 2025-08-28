@@ -269,7 +269,18 @@ class PlayerProfitTracker {
         
         // Create data if it doesn't exist
         if (!file_exists($dataFile)) {
-            $data = ['bets' => [], 'account_balance' => $account['size']];
+            $data = [
+                'bets' => [],
+                'account_balance' => $account['size'],
+                'starting_balance' => $account['size'],
+                'total_wagered' => 0,
+                'total_profit' => 0,
+                'win_rate' => 0,
+                'total_bets' => 0,
+                'wins' => 0,
+                'losses' => 0,
+                'pushes' => 0
+            ];
             file_put_contents($dataFile, json_encode($data, JSON_PRETTY_PRINT));
         }
         
@@ -388,6 +399,9 @@ class PlayerProfitTracker {
         
         $this->saveData($data);
         
+        // Recalculate statistics after adding bet
+        $this->recalculateStats();
+        
         // Check for violations after adding bet
         $violations = $this->checkViolations();
         
@@ -397,6 +411,64 @@ class PlayerProfitTracker {
             'new_balance' => $data['account_balance'],
             'violations' => $violations
         ];
+    }
+    
+    /**
+     * Recalculate and update all betting statistics
+     */
+    public function recalculateStats() {
+        $data = $this->loadData();
+        
+        if (empty($data['bets'])) {
+            $data['total_bets'] = 0;
+            $data['wins'] = 0;
+            $data['losses'] = 0;
+            $data['pushes'] = 0;
+            $data['total_wagered'] = 0;
+            $data['total_profit'] = 0;
+            $data['win_rate'] = 0;
+        } else {
+            $totalBets = count($data['bets']);
+            $wins = 0;
+            $losses = 0;
+            $pushes = 0;
+            $totalWagered = 0;
+            $totalProfit = 0;
+            
+            foreach ($data['bets'] as $bet) {
+                $totalWagered += $bet['stake'];
+                $totalProfit += $bet['pnl'];
+                
+                switch (strtoupper($bet['result'])) {
+                    case 'WIN':
+                    case 'WON':
+                        $wins++;
+                        break;
+                    case 'LOSS':
+                    case 'LOST':
+                    case 'LOSE':
+                        $losses++;
+                        break;
+                    case 'PUSH':
+                    case 'REFUNDED':
+                    case 'VOID':
+                    case 'CASHED OUT':
+                        $pushes++;
+                        break;
+                }
+            }
+            
+            $data['total_bets'] = $totalBets;
+            $data['wins'] = $wins;
+            $data['losses'] = $losses;
+            $data['pushes'] = $pushes;
+            $data['total_wagered'] = $totalWagered;
+            $data['total_profit'] = $totalProfit;
+            $data['win_rate'] = $totalBets > 0 ? ($wins / $totalBets) * 100 : 0;
+        }
+        
+        $this->saveData($data);
+        return $data;
     }
     
     public function checkViolations() {
@@ -663,7 +735,7 @@ class PlayerProfitTracker {
     /**
      * Import bets from CSV data
      */
-    public function importCSVData($csvContent) {
+    public function importCSVData($csvContent, $batchSize = 50, $startLine = 0) {
         if (empty($csvContent)) {
             return ['success' => false, 'error' => 'CSV data is empty'];
         }
@@ -680,15 +752,20 @@ class PlayerProfitTracker {
             array_shift($lines);
         }
         
-        // First pass: Parse and validate all data
+        // Calculate batch boundaries
+        $totalLines = count($lines);
+        $endLine = min($startLine + $batchSize, $totalLines);
+        $batchLines = array_slice($lines, $startLine, $batchSize);
+        
+        // First pass: Parse and validate batch data
         $parsedBets = [];
         $existingBets = $this->getAllBets();
         
         // Debug logging
-        error_log("CSV Import started. Lines to process: " . count($lines));
+        error_log("CSV Batch Import started. Processing lines $startLine-$endLine of $totalLines");
         
         
-        foreach ($lines as $lineNum => $line) {
+        foreach ($batchLines as $lineNum => $line) {
             $line = trim($line);
             if (empty($line)) continue;
             
@@ -844,11 +921,31 @@ class PlayerProfitTracker {
             }
         }
         
-        // Debug final results
-        error_log("CSV Import completed. Imported: $imported, Errors: $errors, Parsed bets: " . count($parsedBets));
-        error_log("Error messages: " . json_encode($errorMessages));
+        // Enhanced final results logging
+        error_log("🔍 CSV IMPORT FINAL DEBUG - Total lines processed: " . count($batchLines));
+        error_log("🔍 CSV IMPORT FINAL DEBUG - Bets successfully imported: $imported");
+        error_log("🔍 CSV IMPORT FINAL DEBUG - Import errors: $errors");
+        error_log("🔍 CSV IMPORT FINAL DEBUG - Validation warnings: " . count($warnings));
+        error_log("🔍 CSV IMPORT FINAL DEBUG - Parsed bets total: " . count($parsedBets));
+        error_log("🔍 CSV IMPORT FINAL DEBUG - Success rate: " . ($imported > 0 ? round(($imported / count($parsedBets)) * 100, 1) : 0) . "%");
         
-        if ($imported > 0) {
+        if (!empty($errorMessages)) {
+            error_log("🔍 CSV IMPORT ERROR DEBUG - First 5 errors: " . json_encode(array_slice($errorMessages, 0, 5)));
+        }
+        if (!empty($warnings)) {
+            error_log("🔍 CSV IMPORT WARNING DEBUG - First 3 warnings: " . json_encode(array_slice($warnings, 0, 3)));
+        }
+        
+        // Calculate batch progress
+        $totalLinesAfterHeader = $totalLines;
+        $processedLines = $startLine + count($batchLines);
+        $hasMoreBatches = $processedLines < $totalLinesAfterHeader;
+        
+        if ($imported > 0 || !$hasMoreBatches) {
+            // Recalculate statistics after import
+            if ($imported > 0) {
+                $this->recalculateStats();
+            }
             $data = $this->loadData();
             return [
                 'success' => true,
@@ -857,14 +954,28 @@ class PlayerProfitTracker {
                 'warnings' => count($warnings),
                 'new_balance' => $data['account_balance'],
                 'error_messages' => $errorMessages,
-                'warning_messages' => $warnings
+                'warning_messages' => $warnings,
+                'batch_info' => [
+                    'current_batch' => floor($startLine / $batchSize) + 1,
+                    'total_lines' => $totalLinesAfterHeader,
+                    'processed_lines' => $processedLines,
+                    'has_more_batches' => $hasMoreBatches,
+                    'next_start_line' => $hasMoreBatches ? $processedLines : null
+                ]
             ];
         } else {
             return [
                 'success' => false,
                 'error' => 'No valid bets found in CSV data. Errors: ' . implode('; ', array_slice($errorMessages, 0, 3)),
                 'warnings' => count($warnings),
-                'warning_messages' => $warnings
+                'warning_messages' => $warnings,
+                'batch_info' => [
+                    'current_batch' => floor($startLine / $batchSize) + 1,
+                    'total_lines' => $totalLinesAfterHeader,
+                    'processed_lines' => $processedLines,
+                    'has_more_batches' => $hasMoreBatches,
+                    'next_start_line' => $hasMoreBatches ? $processedLines : null
+                ]
             ];
         }
     }
@@ -1054,8 +1165,8 @@ class PlayerProfitTracker {
             $data = $this->loadData();
             $config = $this->loadConfig();
             
-            // Determine starting balance from config
-            $startingBalance = $config['starting_balance'] ?? 50000; // Default fallback
+            // Determine starting balance from config or account size
+            $startingBalance = $config['starting_balance'] ?? $config['account_size'] ?? 5000; // Default fallback
             
             // Reset to starting state
             $data['bets'] = [];
@@ -1068,6 +1179,10 @@ class PlayerProfitTracker {
             $data['wins'] = 0;
             $data['losses'] = 0;
             $data['pushes'] = 0;
+            
+            // Reset config highest_balance to starting balance
+            $config['highest_balance'] = $startingBalance;
+            $this->saveConfig($config);
             
             $this->saveData($data);
             
@@ -1311,17 +1426,191 @@ OUTPUT (CSV only, no explanations):";
     }
     
     /**
+     * Split large betting data into smaller chunks for AI processing
+     */
+    private function splitBettingDataForAI($rawData, $maxCharsPerBatch = 8000) {
+        // Check if data needs splitting based on size
+        if (strlen($rawData) < $maxCharsPerBatch) {
+            return [$rawData];
+        }
+        
+        // Split by common betting data separators
+        $patterns = [
+            '/(?=Won\s+\w{3}\s+\d+)/i',  // Split before "Won [Month] [Day]"
+            '/(?=Lost\s+\w{3}\s+\d+)/i', // Split before "Lost [Month] [Day]"
+            '/(?=Pick\s+ID)/i',          // Split before "Pick ID"
+            '/(?=Total\s+Pick)/i'        // Split before "Total Pick"
+        ];
+        
+        $chunks = [];
+        $remainingData = $rawData;
+        
+        while (strlen($remainingData) > $maxCharsPerBatch && count($chunks) < 10) {
+            $chunkFound = false;
+            
+            foreach ($patterns as $pattern) {
+                // Find split points within the chunk size limit
+                $matches = [];
+                preg_match_all($pattern, $remainingData, $matches, PREG_OFFSET_CAPTURE);
+                
+                if (!empty($matches[0])) {
+                    // Find the last match within our size limit
+                    $splitPoint = null;
+                    foreach ($matches[0] as $match) {
+                        if ($match[1] > 1000 && $match[1] <= $maxCharsPerBatch) {
+                            $splitPoint = $match[1];
+                        }
+                    }
+                    
+                    if ($splitPoint) {
+                        $chunks[] = substr($remainingData, 0, $splitPoint);
+                        $remainingData = substr($remainingData, $splitPoint);
+                        $chunkFound = true;
+                        break;
+                    }
+                }
+            }
+            
+            // Fallback: split at arbitrary point if no pattern match
+            if (!$chunkFound) {
+                $chunks[] = substr($remainingData, 0, $maxCharsPerBatch);
+                $remainingData = substr($remainingData, $maxCharsPerBatch);
+            }
+        }
+        
+        // Add remaining data
+        if (!empty($remainingData)) {
+            $chunks[] = $remainingData;
+        }
+        
+        return $chunks;
+    }
+
+    /**
      * Interactive chat with LLM for betting data formatting
      */
     public function chatWithLLM($userMessage, $apiKey, $provider) {
         if (empty($userMessage) || empty($apiKey)) {
             return ['success' => false, 'error' => 'Missing required message or API key'];
         }
+        
+        // Check if this looks like large betting data that should be split
+        $bettingDataIndicators = [
+            'Total Pick', 'Pick ID', 'Profit', 'Payout', 'Won', 'Lost'
+        ];
+        $indicatorCount = 0;
+        foreach ($bettingDataIndicators as $indicator) {
+            $indicatorCount += substr_count($userMessage, $indicator);
+        }
+        
+        // If message is large and contains many betting indicators, process in batches
+        if (strlen($userMessage) > 10000 && $indicatorCount > 15) {
+            return $this->chatWithLLMBatched($userMessage, $apiKey, $provider);
+        }
 
         // Build conversation prompt for chat context
-        $systemPrompt = "You are an expert betting data analyst helping users format their betting history for the PlayerProfit tracking system. Your job is to:\n\n1. Help users understand the required CSV format: Date,Sport,Selection,Stake,Odds,Result\n2. Convert unstructured betting data into proper CSV format\n3. Answer questions about betting data formatting\n4. Provide guidance on PlayerProfit compliance rules\n5. Handle parlay bets with reverse odds calculation\n\nWhen users paste betting data, convert it to CSV format. When they ask questions, provide helpful guidance.\n\nIMPORTANT: For large datasets with many bets, process ALL bets provided by the user. Do not truncate or abbreviate the output. Complete the entire CSV conversion even if it results in a long response.\n\nRequired CSV format:\n- Date: YYYY-MM-DD format\n- Sport: NFL, NBA, MLB, NHL, Tennis, Soccer, etc.\n- Selection: Team name + bet type (e.g., 'Patriots ML', 'Lakers +5.5')\n- Stake: Numeric value (no currency symbols)\n- Odds: American format (-110, +120, etc.)\n- Result: WIN, LOSS, PUSH, REFUNDED, or CASHED OUT\n\nPARLAY BET HANDLING (CRITICAL):\nFor parlay bets with missing individual leg odds:\n\nWINNING PARLAYS:\n- Calculate combined odds using: (profit ÷ stake) = ratio\n- Convert to American: If ratio ≥ 1, use +[ratio×100]; if ratio < 1, use -[100÷ratio]\n- Example: \\$1000 bet won \\$2500 profit = 2.5 ratio = +250 odds\n\nLOSING PARLAYS:\n- Use -110 as placeholder (losses don't affect profit tracking)\n\nBET RESULT TYPES (CRITICAL FOR P&L CALCULATION):\n- WIN: Bet won normally - calculate profit based on odds\n- LOSS: Bet lost normally - full stake amount lost (-stake)\n- PUSH: Tie/No action - ZERO P&L (stake returned, no profit/loss)\n- REFUNDED: Bet cancelled/voided - ZERO P&L (stake returned, no profit/loss)\n- CASHED OUT: User cashed out early for partial payout\n\nIMPORTANT: PUSH and REFUNDED bets have ZERO impact on profit/loss calculation. They return the original stake with no gain or loss. Always include them in the CSV data but mark them clearly as PUSH or REFUNDED.\n\nCOMMON TERMS TO MAP:\n- PUSH: 'Tie', 'No Action', 'Draw', 'Even', 'P'\n- REFUNDED: 'Void', 'Cancelled', 'Canceled', 'Refund', 'Postponed', 'Suspended'\n\nExample CSV with all result types:\n2025-01-15,NFL,Patriots ML,1000,-110,WIN\n2025-01-14,NBA,Lakers +5.5,1500,-105,LOSS\n2025-01-13,Multi,3-leg Parlay,500,+240,WIN\n2025-01-12,Multi,2-team Parlay,1000,-110,LOSS\n2025-01-11,NBA,Celtics ML,800,-120,PUSH\n2025-01-10,NFL,Chiefs +3,1200,+105,REFUNDED";
+        $systemPrompt = "You are an expert betting data analyst helping users format their betting history for the PlayerProfit tracking system. Your job is to:\n\n1. Help users understand the required CSV format: Date,Sport,Selection,Stake,Odds,Result\n2. Convert unstructured betting data into proper CSV format\n3. Answer questions about betting data formatting\n4. Provide guidance on PlayerProfit compliance rules\n5. Handle parlay bets with reverse odds calculation\n\nWhen users paste betting data, convert it to CSV format. When they ask questions, provide helpful guidance.\n\n⚠️ CRITICAL: PROCESS EVERY SINGLE BET - NO EXCEPTIONS!\n- NEVER skip any bets, regardless of format issues\n- NEVER truncate your output due to length\n- NEVER abbreviate or summarize bet data  \n- COUNT your output lines and ensure they match the input bet count\n- If you encounter ANY bet you're unsure about, include it anyway with best-guess formatting\n- ALWAYS finish processing the complete dataset even if response is very long\n\nFor large datasets: Process ALL bets provided by the user. Do not truncate or abbreviate the output. Complete the entire CSV conversion even if it results in a long response.\n\nRequired CSV format:\n- Date: YYYY-MM-DD format\n- Sport: NFL, NBA, MLB, NHL, Tennis, Soccer, etc.\n- Selection: Team name + bet type (e.g., 'Patriots ML', 'Lakers +5.5')\n- Stake: Numeric value (no currency symbols)\n- Odds: American format (-110, +120, etc.)\n- Result: WIN, LOSS, PUSH, REFUNDED, or CASHED OUT\n\nMISSING ODDS CALCULATION (CRITICAL):\nWhen betting data lacks odds (especially parlays), you MUST calculate them from stake and payout data:\n\nWINNING BETS (Singles or Parlays):\n1. Find stake amount: Look for \"bet\", \"risked\", \"wagered\", \"staked\"\n2. Find total payout: Look for \"won\", \"return\", \"payout\", \"total received\", \"paid out\"\n3. Calculate: profit = total_payout - stake\n4. Calculate: ratio = profit ÷ stake\n5. Convert to American odds:\n   - If ratio ≥ 1: odds = +[ratio × 100] (round to nearest whole number)\n   - If ratio < 1: odds = -[100 ÷ ratio] (round to nearest whole number)\n\nEXAMPLES OF REVERSE CALCULATION:\n- \"3-leg parlay, bet \\$500, won \\$2400\" → profit=1900, ratio=3.8, odds=+380\n- \"Parlay: \\$1000 stake, \\$1800 total return\" → profit=800, ratio=0.8, odds=-125\n- \"4-team combo won \\$3500 on \\$1000 bet\" → profit=2500, ratio=2.5, odds=+250\n- \"Single bet: \\$100 stake, \\$190 total payout\" → profit=90, ratio=0.9, odds=-111\n- \"2-leg parlay risked \\$200, profit \\$150\" → total_payout=350, ratio=0.75, odds=-133\n\nLOSING BETS:\n- Always use -110 as placeholder (exact odds irrelevant for losses)\n\nPARLAY IDENTIFICATION:\nLook for: \"parlay\", \"combo\", \"multi\", \"leg\", \"teaser\", \"round robin\"\nSport: Use \"Multi\" for multi-sport parlays, or dominant sport if same sport\n\nBET RESULT TYPES (CRITICAL FOR P&L CALCULATION):\n- WIN: Bet won normally - calculate profit based on odds\n- LOSS: Bet lost normally - full stake amount lost (-stake)\n- PUSH: Tie/No action - ZERO P&L (stake returned, no profit/loss)\n- REFUNDED: Bet cancelled/voided - ZERO P&L (stake returned, no profit/loss)\n- CASHED OUT: User cashed out early for partial payout\n\nIMPORTANT: PUSH and REFUNDED bets have ZERO impact on profit/loss calculation. They return the original stake with no gain or loss. Always include them in the CSV data but mark them clearly as PUSH or REFUNDED.\n\nCRITICAL RULES:\n- NEVER skip bets due to missing odds\n- ALWAYS include ALL bets found in raw data  \n- Calculate odds for winners, use -110 for losers\n- Double-check profit calculations before converting to odds\n\nCOMMON TERMS TO MAP:\n- PUSH: 'Tie', 'No Action', 'Draw', 'Even', 'P'\n- REFUNDED: 'Void', 'Cancelled', 'Canceled', 'Refund', 'Postponed', 'Suspended'\n\nExample CSV with all result types:\n2025-01-15,NFL,Patriots ML,1000,-110,WIN\n2025-01-14,NBA,Lakers +5.5,1500,-105,LOSS\n2025-01-13,Multi,3-leg Parlay,500,+240,WIN\n2025-01-12,Multi,2-team Parlay,1000,-110,LOSS\n2025-01-11,NBA,Celtics ML,800,-120,PUSH\n2025-01-10,NFL,Chiefs +3,1200,+105,REFUNDED";
 
         $chatPrompt = $systemPrompt . "\n\nUser: " . $userMessage . "\n\nAssistant:";
+        
+        // Prepare API request based on provider
+        return $this->callLLMAPI($chatPrompt, $apiKey, $provider);
+    }
+    
+    /**
+     * Process large betting data in batches to avoid AI truncation
+     */
+    public function chatWithLLMBatched($userMessage, $apiKey, $provider) {
+        // Split the data into manageable chunks
+        $chunks = $this->splitBettingDataForAI($userMessage);
+        
+        error_log("🔍 BATCH PROCESSING DEBUG - Split data into " . count($chunks) . " chunks");
+        
+        $allCsvLines = [];
+        $totalProcessed = 0;
+        $batchErrors = [];
+        
+        // Create a specialized system prompt for batch processing
+        $batchSystemPrompt = "You are processing a BATCH of betting data. This is part " . "X" . " of a larger dataset.\n\n" .
+        "CRITICAL BATCH RULES:\n" .
+        "- Process ALL bets in this batch - no truncation allowed\n" .
+        "- Output ONLY the CSV data lines (no headers, no explanations)\n" .
+        "- Use format: Date,Sport,Selection,Stake,Odds,Result\n" .
+        "- Calculate missing odds from stake/payout data\n" .
+        "- Include ALL bet types: WIN, LOSS, PUSH, REFUNDED\n\n" .
+        "Convert this betting data batch to CSV format:";
+        
+        foreach ($chunks as $chunkIndex => $chunk) {
+            $currentBatchPrompt = str_replace("part X", "part " . ($chunkIndex + 1) . " of " . count($chunks), $batchSystemPrompt);
+            $chunkPrompt = $currentBatchPrompt . "\n\nBetting Data:\n" . $chunk . "\n\nCSV Output:";
+            
+            error_log("🔍 BATCH DEBUG - Processing chunk " . ($chunkIndex + 1) . "/" . count($chunks) . " (" . strlen($chunk) . " chars)");
+            
+            $chunkResult = $this->callLLMAPI($chunkPrompt, $apiKey, $provider);
+            
+            if ($chunkResult['success'] && isset($chunkResult['response'])) {
+                // Extract CSV lines from the response
+                $lines = explode("\n", trim($chunkResult['response']));
+                $csvLinesInChunk = 0;
+                
+                foreach ($lines as $line) {
+                    $line = trim($line);
+                    // Validate CSV format
+                    if (preg_match('/^\d{4}-\d{2}-\d{2},[^,]*,[^,]*,[\d.]+,[-+]?\d+,(WIN|LOSS|PUSH|REFUNDED|CASHED OUT)$/i', $line)) {
+                        $allCsvLines[] = $line;
+                        $csvLinesInChunk++;
+                    }
+                }
+                
+                $totalProcessed += $csvLinesInChunk;
+                error_log("🔍 BATCH DEBUG - Chunk " . ($chunkIndex + 1) . " produced " . $csvLinesInChunk . " valid CSV lines");
+                
+            } else {
+                $batchErrors[] = "Chunk " . ($chunkIndex + 1) . " failed: " . ($chunkResult['error'] ?? 'Unknown error');
+                error_log("🔍 BATCH ERROR - Chunk " . ($chunkIndex + 1) . " failed: " . ($chunkResult['error'] ?? 'Unknown error'));
+            }
+            
+            // Brief delay between API calls to avoid rate limiting
+            usleep(500000); // 0.5 seconds
+        }
+        
+        if (empty($allCsvLines)) {
+            return [
+                'success' => false,
+                'error' => 'No valid CSV data produced from batches. Errors: ' . implode('; ', $batchErrors)
+            ];
+        }
+        
+        // Combine all CSV lines with header
+        $combinedCsv = "Date,Sport,Selection,Stake,Odds,Result\n" . implode("\n", $allCsvLines);
+        
+        error_log("🔍 BATCH FINAL DEBUG - Total CSV lines produced: " . count($allCsvLines));
+        error_log("🔍 BATCH FINAL DEBUG - Batch errors: " . count($batchErrors));
+        
+        // Return in the same format as regular chat
+        return [
+            'success' => true,
+            'response' => "📊 **Batch Processing Complete!**\n\n" .
+                         "Processed **" . count($chunks) . " batches** of your betting data.\n" .
+                         "Found **" . count($allCsvLines) . " betting records** total.\n\n" .
+                         "**📥 Ready to Import**\n" .
+                         "```csv\n" . $combinedCsv . "\n```\n\n" .
+                         "All " . count($allCsvLines) . " bets are ready for import! Click the Import button above."
+        ];
+    }
+    
+    /**
+     * Call the appropriate LLM API based on provider
+     */
+    private function callLLMAPI($prompt, $apiKey, $provider) {
+        // Extract system and user messages from prompt
+        if (strpos($prompt, "\n\nUser: ") !== false) {
+            list($systemPrompt, $userPart) = explode("\n\nUser: ", $prompt, 2);
+            $userMessage = str_replace("\n\nAssistant:", "", $userPart);
+        } else {
+            $systemPrompt = "";
+            $userMessage = $prompt;
+        }
 
         // Prepare API request based on provider
         $url = '';
@@ -1368,7 +1657,7 @@ OUTPUT (CSV only, no explanations):";
                 $headers = ['Content-Type: application/json'];
                 $data = [
                     'contents' => [
-                        ['parts' => [['text' => $chatPrompt]]]
+                        ['parts' => [['text' => $prompt]]]
                     ],
                     'generationConfig' => [
                         'temperature' => 0.1,
@@ -1382,7 +1671,7 @@ OUTPUT (CSV only, no explanations):";
                 $headers = ['Content-Type: application/json'];
                 $data = [
                     'model' => 'llama2',
-                    'prompt' => $chatPrompt,
+                    'prompt' => $prompt,
                     'stream' => false,
                     'options' => [
                         'temperature' => 0.1,
@@ -1687,10 +1976,17 @@ if (isset($_GET['account_created'])) {
         $allAccounts = $tempTracker->getAllAccounts();
         if (!empty($allAccounts)) {
             $currentAccountId = array_keys($allAccounts)[0]; // Use first available account
+            error_log("🔍 DEBUG: Using first available account: " . $currentAccountId);
         } else {
-            $currentAccountId = 'pro_50k'; // Final fallback
+            $currentAccountId = 'standard_5k'; // Changed fallback to standard_5k instead of pro_50k
+            error_log("🔍 DEBUG: Using fallback account: " . $currentAccountId);
         }
     }
+    
+    // Ensure session is updated
+    $_SESSION['current_account'] = $currentAccountId;
+    error_log("🔍 DEBUG: Final currentAccountId: " . $currentAccountId);
+    
     $tracker = new PlayerProfitTracker($currentAccountId);
 }
 
@@ -1752,41 +2048,6 @@ if ($_POST) {
         } else {
             $message = "❌ " . $result['error'];
         }
-    }
-    
-    // Handle CSV Import (Paste Method)
-    if (isset($_POST['action']) && $_POST['action'] === 'import_csv_paste') {
-        $csvData = trim($_POST['csv_data']);
-        $accountId = $_POST['account_id'];
-        
-        // Create a new tracker instance for the specified account
-        $importTracker = new PlayerProfitTracker($accountId);
-        $importResult = $importTracker->importCSVData($csvData);
-        
-        
-        if ($importResult['success'] && $importResult['count'] > 0) {
-            $message = "✅ Successfully imported " . $importResult['count'] . " bets (chronologically sorted)! New balance: $" . number_format($importResult['new_balance'], 2);
-            if ($importResult['errors'] > 0) {
-                $message .= " ❌ " . $importResult['errors'] . " rows had errors and were skipped.";
-            }
-            if ($importResult['warnings'] > 0) {
-                $message .= " ⚠️ " . $importResult['warnings'] . " warnings found (possible duplicates).";
-            }
-        } elseif ($importResult['success'] && $importResult['count'] == 0) {
-            $message = "⚠️ No bets were imported. ";
-            if ($importResult['errors'] > 0) {
-                $message .= "All " . $importResult['errors'] . " rows had validation errors: " . implode('; ', array_slice($importResult['error_messages'], 0, 3));
-            } else {
-                $message .= "The CSV data may be empty or in an unrecognized format.";
-            }
-        } else {
-            $message = "❌ Import failed: " . $importResult['error'];
-            if (isset($importResult['warnings']) && $importResult['warnings'] > 0) {
-                $message .= " ⚠️ " . $importResult['warnings'] . " warnings found.";
-            }
-        }
-        header("Location: " . $_SERVER['PHP_SELF'] . "?imported=1");
-        exit;
     }
     
     // Handle CSV Import (File Upload Method)
@@ -1878,14 +2139,53 @@ if ($_POST) {
             exit;
         }
         
-        // Debug logging
-        error_log("Chat with LLM - Provider: $provider, API Key length: " . strlen($apiKey) . ", Message: " . substr($userMessage, 0, 100));
-        error_log("Available session keys: " . json_encode(array_keys($_SESSION['api_keys'] ?? [])));
+        // Enhanced debug logging for truncation analysis
+        error_log("🔍 AI CHAT DEBUG - Input message length: " . strlen($userMessage) . " chars");
+        error_log("🔍 AI CHAT DEBUG - Input preview: " . substr($userMessage, 0, 200) . "...");
+        error_log("🔍 AI CHAT DEBUG - Provider: $provider, API Key length: " . strlen($apiKey));
+        error_log("🔍 AI CHAT DEBUG - Available session keys: " . json_encode(array_keys($_SESSION['api_keys'] ?? [])));
+        
+        // Count approximate bet entries in input
+        $inputBetCount = substr_count(strtolower($userMessage), 'pick id') + substr_count(strtolower($userMessage), 'total pick') + substr_count(strtolower($userMessage), 'won') + substr_count(strtolower($userMessage), 'lost');
+        error_log("🔍 AI CHAT DEBUG - Estimated bets in input: " . $inputBetCount);
         
         $chatResult = $tracker->chatWithLLM($userMessage, $apiKey, $provider);
         
-        // Log the result for debugging
-        error_log("Chat result: " . json_encode($chatResult));
+        // Enhanced response analysis
+        if (isset($chatResult['response'])) {
+            $responseLength = strlen($chatResult['response']);
+            $responseLinesCount = substr_count($chatResult['response'], "\n");
+            $csvLinesCount = 0;
+            
+            // Count actual CSV data lines (exclude headers and non-data lines)
+            $lines = explode("\n", $chatResult['response']);
+            foreach ($lines as $line) {
+                if (preg_match('/^\d{4}-\d{2}-\d{2},[^,]*,[^,]*,[\d.]+,[-+]?\d+,(WIN|LOSS|PUSH|REFUNDED)/', trim($line))) {
+                    $csvLinesCount++;
+                }
+            }
+            
+            error_log("🔍 AI RESPONSE DEBUG - Response length: " . $responseLength . " chars");
+            error_log("🔍 AI RESPONSE DEBUG - Total line count: " . $responseLinesCount);
+            error_log("🔍 AI RESPONSE DEBUG - Valid CSV bet lines: " . $csvLinesCount);
+            error_log("🔍 AI RESPONSE DEBUG - Input vs Output bet ratio: " . ($inputBetCount > 0 ? round(($csvLinesCount / $inputBetCount) * 100, 1) : 'N/A') . "%");
+            error_log("🔍 AI RESPONSE DEBUG - Response preview: " . substr($chatResult['response'], 0, 300) . "...");
+            error_log("🔍 AI RESPONSE DEBUG - Response ending: ..." . substr($chatResult['response'], -200));
+            
+            // Check if response appears truncated
+            $responseEnds = trim(substr($chatResult['response'], -100));
+            $appearsTruncated = !preg_match('/[.!?]$/', $responseEnds) && 
+                               !preg_match('/\d{4}-\d{2}-\d{2},[^,]*,[^,]*,[\d.]+,[-+]?\d+,(WIN|LOSS|PUSH|REFUNDED)$/', $responseEnds) &&
+                               !strpos($responseEnds, 'CSV data') &&
+                               !strpos($responseEnds, 'format');
+            error_log("🔍 AI RESPONSE DEBUG - Appears truncated: " . ($appearsTruncated ? 'YES - LIKELY TRUNCATED' : 'NO - Appears complete'));
+        }
+        
+        error_log("🔍 AI CHAT DEBUG - Full result summary: " . json_encode([
+            'success' => $chatResult['success'] ?? false,
+            'response_length' => isset($chatResult['response']) ? strlen($chatResult['response']) : 0,
+            'error' => $chatResult['error'] ?? null
+        ]));
         
         echo json_encode($chatResult);
         exit;
@@ -2078,6 +2378,126 @@ if (!$showSetupWizard && !$showAccountCreated) {
         $allBets = [];
         $violations = [];
         $discordMessage = '';
+    }
+} // End of main if ($_POST) block
+
+// Handle CSV Import (Paste Method)
+if (isset($_POST['action']) && $_POST['action'] === 'import_csv_paste') {
+    // Debug PHP limits and input size
+    error_log("🔍 PHP LIMITS DEBUG - post_max_size: " . ini_get('post_max_size'));
+    error_log("🔍 PHP LIMITS DEBUG - memory_limit: " . ini_get('memory_limit'));
+    error_log("🔍 PHP LIMITS DEBUG - max_execution_time: " . ini_get('max_execution_time'));
+    error_log("🔍 PHP LIMITS DEBUG - POST data size: " . (isset($_SERVER['CONTENT_LENGTH']) ? $_SERVER['CONTENT_LENGTH'] : 'Unknown') . " bytes");
+    error_log("🔍 PHP LIMITS DEBUG - PHP input size: " . (isset($_POST['csv_data']) ? strlen($_POST['csv_data']) : 0) . " chars");
+    
+    $csvData = trim($_POST['csv_data']);
+    $accountId = $_POST['account_id'];
+    
+    error_log("🔍 CSV IMPORT DEBUG - Received CSV data length: " . strlen($csvData) . " chars");
+    error_log("🔍 CSV IMPORT DEBUG - CSV line count: " . substr_count($csvData, "\n"));
+    error_log("🔍 CSV IMPORT DEBUG - Account ID: " . $accountId);
+    
+    // Check if it's a large import that should use batch processing
+    $lines = explode("\n", trim($csvData));
+    if (count($lines) > 100) {
+        // For large imports, use JavaScript batch processing
+        echo "<script>window.startBatchImport(`" . addslashes($csvData) . "`);</script>";
+        $message = "⏳ Large CSV detected (" . count($lines) . " lines). Processing in batches...";
+    } else {
+        // Process small imports normally
+        $importTracker = new PlayerProfitTracker($accountId);
+        $importResult = $importTracker->importCSVData($csvData);
+        
+        if ($importResult['success'] && $importResult['count'] > 0) {
+            $message = "✅ Successfully imported " . $importResult['count'] . " bets to account '$accountId'! New balance: $" . number_format($importResult['new_balance'], 2);
+            if ($importResult['errors'] > 0) {
+                $message .= " ❌ " . $importResult['errors'] . " rows had errors.";
+            }
+            // Debug info
+            $message .= " 🔍 DEBUG: Imported to account '$accountId', data file: account_" . $accountId . "_data.json";
+        } elseif ($importResult['success'] && $importResult['count'] == 0) {
+            $message = "⚠️ No bets were imported to account '$accountId'. Check your CSV format. 🔍 DEBUG: Target file: account_" . $accountId . "_data.json";
+        } else {
+            $message = "❌ Import failed for account '$accountId': " . $importResult['error'];
+        }
+    }
+    
+    // Redirect to avoid resubmission
+    if (!headers_sent()) {
+        header("Location: " . $_SERVER['PHP_SELF'] . "?imported=1");
+        exit;
+    } else {
+        // If headers already sent, use JavaScript redirect
+        echo "<script>window.location.href = '" . $_SERVER['PHP_SELF'] . "?imported=1';</script>";
+        exit;
+    }
+}
+
+// Handle Manual Statistics Recalculation
+if (isset($_POST['action']) && $_POST['action'] === 'recalculate_stats') {
+    header('Content-Type: application/json');
+    
+    $accountId = $_POST['account_id'] ?? $currentAccountId;
+    $statsTracker = new PlayerProfitTracker($accountId);
+    $statsTracker->recalculateStats();
+    
+    echo json_encode(['success' => true, 'message' => 'Statistics recalculated for account: ' . $accountId]);
+    exit;
+}
+
+// Handle CSV Batch Import (AJAX)
+if (isset($_POST['action']) && $_POST['action'] === 'import_csv_batch') {
+    header('Content-Type: application/json');
+    
+    $csvData = trim($_POST['csv_data']);
+    $accountId = $_POST['account_id'];
+    $startLine = intval($_POST['start_line'] ?? 0);
+    $batchSize = intval($_POST['batch_size'] ?? 50);
+    
+    // Create a new tracker instance for the specified account
+    $importTracker = new PlayerProfitTracker($accountId);
+    $importResult = $importTracker->importCSVData($csvData, $batchSize, $startLine);
+    
+    echo json_encode($importResult);
+    exit;
+}
+
+// Handle Single Bet Addition
+if (isset($_POST['action']) && $_POST['action'] === 'add_single_bet') {
+    $accountId = $_POST['account_id'];
+    $date = $_POST['bet_date'];
+    $sport = $_POST['bet_sport'];
+    $selection = $_POST['bet_selection'];
+    $stake = floatval($_POST['bet_stake']);
+    $oddsRaw = $_POST['bet_odds'];
+    $result = $_POST['bet_result'];
+    
+    // Parse odds
+    $odds = 0;
+    $cleanOdds = str_replace(['+', ' '], '', $oddsRaw);
+    if (is_numeric($cleanOdds)) {
+        $odds = intval($cleanOdds);
+    }
+    
+    // Create a new tracker instance for the specified account
+    $betTracker = new PlayerProfitTracker($accountId);
+    $addResult = $betTracker->addBet($date, $sport, $selection, $stake, $odds, $result);
+    
+    if ($addResult['success']) {
+        $message = "✅ Successfully added bet: $selection ($sport) for $$stake at $oddsRaw odds - Result: $result. New balance: $" . number_format($addResult['new_balance'], 2);
+        $message .= " 🔍 DEBUG: Added to account '$accountId', data file: account_" . $accountId . "_data.json";
+    } else {
+        $message = "❌ Error adding bet to account '$accountId': " . $addResult['error'];
+    }
+    
+    // Redirect to avoid resubmission and refresh the data
+    if (!headers_sent()) {
+        header("Location: " . $_SERVER['PHP_SELF'] . "?bet_added=1");
+        exit;
+    } else {
+        // If headers already sent, use JavaScript redirect
+        echo "<script>window.location.href = '" . $_SERVER['PHP_SELF'] . "?bet_added=1';</script>";
+        exit;
     }
 }
 
@@ -3805,6 +4225,19 @@ $needsSetup = false; // Multi-account system handles setup automatically
             <div class="message success"><?= htmlspecialchars($message) ?></div>
         <?php endif; ?>
         
+        <!-- Debug Info Panel -->
+        <div style="background: rgba(33,150,243,0.1); border: 1px solid #2196F3; border-radius: 8px; padding: 15px; margin-bottom: 20px;">
+            <h4 style="color: #2196F3; margin-bottom: 10px;">🔍 Debug Information</h4>
+            <div style="font-family: monospace; font-size: 12px; color: #ccc;">
+                <strong>Current Account Display:</strong> <?= $currentAccountId ?><br>
+                <strong>Data File Being Read:</strong> account_<?= $currentAccountId ?>_data.json<br>
+                <strong>Total Bets in Current Account:</strong> <?= count($allBets) ?><br>
+                <strong>Account Balance:</strong> $<?= number_format($accountStatus['current_balance'] ?? 0, 2) ?><br>
+                <strong>Session Account ID:</strong> <?= $_SESSION['current_account'] ?? 'None' ?><br>
+                <strong>Account Exists:</strong> <?= file_exists(__DIR__ . '/data/account_' . $currentAccountId . '_data.json') ? 'Yes' : 'No' ?>
+            </div>
+        </div>
+        
         <?php if ($needsSetup): ?>
             <div class="setup-card">
                 <h2>🚀 Account Setup</h2>
@@ -4245,8 +4678,8 @@ $needsSetup = false; // Multi-account system handles setup automatically
                             <input type="hidden" name="account_id" value="<?= htmlspecialchars($currentAccountId ?? '') ?>">
                             
                             <div class="form-group">
-                                <label for="csv-data">CSV Data:</label>
-                                <textarea name="csv_data" id="csv-data" rows="8" placeholder="2025-01-15,NFL,Patriots ML,1000,-110,WIN
+                                <label for="csv-data-manual">CSV Data:</label>
+                                <textarea name="csv_data" id="csv-data-manual" rows="8" placeholder="2025-01-15,NFL,Patriots ML,1000,-110,WIN
 2025-01-14,NBA,Lakers +5.5,1000,-105,LOSS
 2025-01-13,MLB,Yankees Over 9.5,1000,+120,WIN" 
                                 oninput="previewCSV()" 
@@ -4279,8 +4712,8 @@ $needsSetup = false; // Multi-account system handles setup automatically
                             <input type="hidden" name="account_id" value="<?= htmlspecialchars($currentAccountId ?? '') ?>">
                             
                             <div class="form-group">
-                                <label for="csv-file">Select CSV File:</label>
-                                <input type="file" name="csv_file" id="csv-file" accept=".csv,.txt" 
+                                <label for="csv-file-manual">Select CSV File:</label>
+                                <input type="file" name="csv_file" id="csv-file-manual" accept=".csv,.txt" 
                                        style="width: 100%; padding: 10px; background: rgba(0,0,0,0.3); border: 2px solid rgba(255,255,255,0.2); border-radius: 8px; color: var(--text-primary, white);">
                             </div>
                             
@@ -4290,10 +4723,85 @@ $needsSetup = false; // Multi-account system handles setup automatically
                         </form>
                     </div>
                     
+                    <!-- Daily Bet Addition -->
+                    <div class="import-method" style="background: rgba(76,175,80,0.1); padding: 25px; border-radius: 10px; border: 1px solid #4CAF50; margin-top: 20px;">
+                        <h4 style="color: #4CAF50; margin-bottom: 15px;">➕ Method 4: Add Daily Bets</h4>
+                        <p style="font-size: 14px; margin-bottom: 20px; color: #ccc;">
+                            Quick form to add new bets one by one - perfect for daily updates!
+                        </p>
+                        
+                        <form method="POST" action="">
+                            <input type="hidden" name="action" value="add_single_bet">
+                            <input type="hidden" name="account_id" value="<?= htmlspecialchars($currentAccountId ?? '') ?>">
+                            
+                            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 15px; margin-bottom: 15px;">
+                                <div class="form-group">
+                                    <label for="bet-date">Date:</label>
+                                    <input type="date" name="bet_date" id="bet-date" value="<?= date('Y-m-d') ?>" required
+                                           style="width: 100%; padding: 8px; background: rgba(0,0,0,0.3); border: 2px solid rgba(255,255,255,0.2); border-radius: 6px; color: var(--text-primary, white);">
+                                </div>
+                                
+                                <div class="form-group">
+                                    <label for="bet-sport">Sport:</label>
+                                    <select name="bet_sport" id="bet-sport" required
+                                           style="width: 100%; padding: 8px; background: rgba(0,0,0,0.3); border: 2px solid rgba(255,255,255,0.2); border-radius: 6px; color: var(--text-primary, white);">
+                                        <option value="">Select Sport...</option>
+                                        <option value="NFL">NFL</option>
+                                        <option value="NBA">NBA</option>
+                                        <option value="MLB">MLB</option>
+                                        <option value="NHL">NHL</option>
+                                        <option value="Soccer">Soccer</option>
+                                        <option value="Tennis">Tennis</option>
+                                        <option value="WNBA">WNBA</option>
+                                        <option value="College Football">College Football</option>
+                                        <option value="College Basketball">College Basketball</option>
+                                        <option value="Other">Other</option>
+                                    </select>
+                                </div>
+                            </div>
+                            
+                            <div class="form-group">
+                                <label for="bet-selection">Selection/Pick:</label>
+                                <input type="text" name="bet_selection" id="bet-selection" placeholder="e.g. Patriots ML, Lakers +5.5, Over 48.5" required
+                                       style="width: 100%; padding: 8px; background: rgba(0,0,0,0.3); border: 2px solid rgba(255,255,255,0.2); border-radius: 6px; color: var(--text-primary, white);">
+                            </div>
+                            
+                            <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 15px; margin-bottom: 15px;">
+                                <div class="form-group">
+                                    <label for="bet-stake">Stake ($):</label>
+                                    <input type="number" name="bet_stake" id="bet-stake" step="0.01" min="0.01" placeholder="100" required
+                                           style="width: 100%; padding: 8px; background: rgba(0,0,0,0.3); border: 2px solid rgba(255,255,255,0.2); border-radius: 6px; color: var(--text-primary, white);">
+                                </div>
+                                
+                                <div class="form-group">
+                                    <label for="bet-odds">Odds:</label>
+                                    <input type="text" name="bet_odds" id="bet-odds" placeholder="-110, +120, etc." required
+                                           style="width: 100%; padding: 8px; background: rgba(0,0,0,0.3); border: 2px solid rgba(255,255,255,0.2); border-radius: 6px; color: var(--text-primary, white);">
+                                </div>
+                                
+                                <div class="form-group">
+                                    <label for="bet-result">Result:</label>
+                                    <select name="bet_result" id="bet-result" required
+                                           style="width: 100%; padding: 8px; background: rgba(0,0,0,0.3); border: 2px solid rgba(255,255,255,0.2); border-radius: 6px; color: var(--text-primary, white);">
+                                        <option value="">Select Result...</option>
+                                        <option value="WIN">WIN</option>
+                                        <option value="LOSS">LOSS</option>
+                                        <option value="PUSH">PUSH</option>
+                                        <option value="REFUNDED">REFUNDED</option>
+                                        <option value="CASHED OUT">CASHED OUT</option>
+                                    </select>
+                                </div>
+                            </div>
+                            
+                            <button type="submit" class="btn btn-success" style="width: 100%; padding: 12px; font-size: 16px;">
+                                ➕ Add Bet to Account
+                            </button>
+                        </form>
+                    </div>
                     
                     <!-- PlayerProfit Integration -->
-                    <div class="import-method" style="background: rgba(255,215,0,0.1); padding: 25px; border-radius: 10px; border: 1px solid #FFD700;">
-                        <h4 style="color: #FFD700; margin-bottom: 15px;">🔗 Method 4: PlayerProfit API (Coming Soon)</h4>
+                    <div class="import-method" style="background: rgba(255,215,0,0.1); padding: 25px; border-radius: 10px; border: 1px solid #FFD700; margin-top: 20px;">
+                        <h4 style="color: #FFD700; margin-bottom: 15px;">🔗 Method 5: PlayerProfit API (Coming Soon)</h4>
                         <p style="font-size: 14px; margin-bottom: 15px; color: #ccc;">
                             Direct integration with PlayerProfit platform for automatic bet sync.
                         </p>
@@ -4404,7 +4912,7 @@ $needsSetup = false; // Multi-account system handles setup automatically
             
             <!-- All Bets Tab -->
             <div id="all-bets" class="tab-content active">
-                <h3>📋 All Bets (<?= count($allBets) ?> total)</h3>
+                <h3>📋 All Bets (<?= count($allBets) ?> total) 🔍 Account: <?= $currentAccountId ?></h3>
                 <?php if (!empty($allBets)): ?>
                     <table class="bets-table">
                         <thead>
@@ -5016,13 +5524,27 @@ $needsSetup = false; // Multi-account system handles setup automatically
             const bgColor = isUser ? 'rgba(255,215,0,0.1)' : 'rgba(76,175,80,0.1)';
             const borderColor = isUser ? '#FFD700' : '#4CAF50';
             
+            // Add copy button for assistant messages containing CSV data
+            let copyButton = '';
+            if (!isUser && content.includes('```csv')) {
+                copyButton = `<button onclick="copyCSVToClipboard(this)" style="background: #4CAF50; color: white; border: none; padding: 5px 10px; border-radius: 4px; margin-top: 10px; cursor: pointer; font-size: 12px;">📋 Copy CSV</button>`;
+            }
+            
             messageDiv.innerHTML = `
                 <div style="color: ${roleColor}; font-weight: bold; margin-bottom: 5px;">${roleIcon} ${roleName}</div>
-                <div style="background: ${bgColor}; padding: 10px; border-radius: 8px; border-left: 3px solid ${borderColor}; white-space: pre-wrap;">${content}</div>
+                <div style="background: ${bgColor}; padding: 10px; border-radius: 8px; border-left: 3px solid ${borderColor}; white-space: pre-wrap;">${content}${copyButton}</div>
             `;
             
             chatMessages.appendChild(messageDiv);
             chatMessages.scrollTop = chatMessages.scrollHeight;
+            
+            // Save to localStorage for persistence
+            saveChatHistory();
+            
+            // Show CSV ready indicator for assistant messages with CSV
+            if (!isUser && content.includes('```csv')) {
+                showCSVReadyIndicator();
+            }
         }
         
         function showCSVImportOptions(csvData) {
@@ -5031,20 +5553,136 @@ $needsSetup = false; // Multi-account system handles setup automatically
             llmOutput.style.display = 'block';
         }
         
+        function copyCSVToClipboard(button) {
+            const messageDiv = button.closest('.chat-message');
+            const contentDiv = messageDiv.querySelector('[style*="white-space: pre-wrap"]');
+            const content = contentDiv.textContent;
+            
+            // Extract CSV from content
+            const csvMatch = content.match(/```csv\n([\s\S]*?)\n```/);
+            if (csvMatch) {
+                const csvData = csvMatch[1];
+                navigator.clipboard.writeText(csvData).then(() => {
+                    button.textContent = '✅ Copied!';
+                    button.style.background = '#4CAF50';
+                    setTimeout(() => {
+                        button.textContent = '📋 Copy CSV';
+                        button.style.background = '#4CAF50';
+                    }, 2000);
+                }).catch(err => {
+                    console.error('Failed to copy:', err);
+                    button.textContent = '❌ Failed';
+                    button.style.background = '#f44336';
+                });
+            }
+        }
+        
+        function saveChatHistory() {
+            const chatMessages = document.getElementById('chat-messages');
+            const messages = [];
+            
+            chatMessages.querySelectorAll('.chat-message').forEach(msg => {
+                const roleDiv = msg.querySelector('[style*="font-weight: bold"]');
+                const contentDiv = msg.querySelector('[style*="white-space: pre-wrap"]');
+                
+                if (roleDiv && contentDiv) {
+                    const role = roleDiv.textContent.includes('You') ? 'user' : 'assistant';
+                    const content = contentDiv.textContent.replace(/📋 Copy CSV$/, '').trim();
+                    
+                    messages.push({ role, content, timestamp: Date.now() });
+                }
+            });
+            
+            localStorage.setItem('playerprofit_chat_history', JSON.stringify(messages));
+        }
+        
+        function loadChatHistory() {
+            const saved = localStorage.getItem('playerprofit_chat_history');
+            if (!saved) return;
+            
+            try {
+                const messages = JSON.parse(saved);
+                const chatMessages = document.getElementById('chat-messages');
+                
+                // Clear default message
+                chatMessages.innerHTML = '';
+                
+                messages.forEach(msg => {
+                    addChatMessageWithoutSave(msg.role, msg.content);
+                });
+                
+            } catch (e) {
+                console.error('Failed to load chat history:', e);
+            }
+        }
+        
+        function addChatMessageWithoutSave(role, content) {
+            const chatMessages = document.getElementById('chat-messages');
+            const messageDiv = document.createElement('div');
+            messageDiv.className = `chat-message ${role}`;
+            messageDiv.style.marginBottom = '15px';
+            
+            const isUser = role === 'user';
+            const roleColor = isUser ? '#FFD700' : '#4CAF50';
+            const roleIcon = isUser ? '👤' : '🤖';
+            const roleName = isUser ? 'You' : 'AI Assistant';
+            const bgColor = isUser ? 'rgba(255,215,0,0.1)' : 'rgba(76,175,80,0.1)';
+            const borderColor = isUser ? '#FFD700' : '#4CAF50';
+            
+            // Add copy button for assistant messages containing CSV data
+            let copyButton = '';
+            if (!isUser && content.includes('```csv')) {
+                copyButton = `<button onclick="copyCSVToClipboard(this)" style="background: #4CAF50; color: white; border: none; padding: 5px 10px; border-radius: 4px; margin-top: 10px; cursor: pointer; font-size: 12px;">📋 Copy CSV</button>`;
+            }
+            
+            messageDiv.innerHTML = `
+                <div style="color: ${roleColor}; font-weight: bold; margin-bottom: 5px;">${roleIcon} ${roleName}</div>
+                <div style="background: ${bgColor}; padding: 10px; border-radius: 8px; border-left: 3px solid ${borderColor}; white-space: pre-wrap;">${content}${copyButton}</div>
+            `;
+            
+            chatMessages.appendChild(messageDiv);
+            chatMessages.scrollTop = chatMessages.scrollHeight;
+        }
+        
+        function showCSVReadyIndicator() {
+            const indicator = document.getElementById('csv-ready-indicator');
+            if (indicator) {
+                indicator.style.display = 'block';
+                
+                // Auto-hide after 30 seconds
+                setTimeout(() => {
+                    indicator.style.display = 'none';
+                }, 30000);
+            }
+        }
+        
+        function clearChatHistory() {
+            if (confirm('Are you sure you want to clear chat history? This will remove all conversation data.')) {
+                clearChat();
+            }
+        }
+        
         function clearChat() {
             const chatMessages = document.getElementById('chat-messages');
-            chatMessages.innerHTML = `
-                <div class="chat-message assistant" style="margin-bottom: 15px;">
-                    <div style="color: #4CAF50; font-weight: bold; margin-bottom: 5px;">🤖 AI Assistant</div>
-                    <div style="background: rgba(76,175,80,0.1); padding: 10px; border-radius: 8px; border-left: 3px solid #4CAF50;">
-                        Chat cleared! I'm ready to help format your betting data again. Just paste your data or ask me anything!
+            if (chatMessages) {
+                chatMessages.innerHTML = `
+                    <div class="chat-message assistant" style="margin-bottom: 15px;">
+                        <div style="color: #4CAF50; font-weight: bold; margin-bottom: 5px;">🤖 AI Assistant</div>
+                        <div style="background: rgba(76,175,80,0.1); padding: 10px; border-radius: 8px; border-left: 3px solid #4CAF50;">
+                            Chat cleared! I'm ready to help format your betting data again. Just paste your data or ask me anything!
+                        </div>
                     </div>
-                </div>
-            `;
+                `;
+            }
             
             const chatInput = document.getElementById('chat-input');
             chatInput.value = '';
             updateChatButton();
+            
+            // Clear saved history and hide CSV indicator
+            localStorage.removeItem('playerprofit_chat_history');
+            const indicator = document.getElementById('csv-ready-indicator');
+            if (indicator) indicator.style.display = 'none';
         }
         
         function importParsedData() {
@@ -5106,13 +5744,17 @@ $needsSetup = false; // Multi-account system handles setup automatically
             // Initialize mobile navigation based on screen size
             function checkMobile() {
                 const toggle = document.querySelector('.mobile-nav-toggle');
-                if (window.innerWidth <= 768) {
-                    toggle.style.display = 'block';
-                } else {
-                    toggle.style.display = 'none';
-                    // Close mobile nav if open
-                    document.getElementById('mobile-sidebar').classList.remove('open');
-                    document.getElementById('sidebar-overlay').classList.remove('open');
+                if (toggle) {
+                    if (window.innerWidth <= 768) {
+                        toggle.style.display = 'block';
+                    } else {
+                        toggle.style.display = 'none';
+                        // Close mobile nav if open
+                        const mobileSidebar = document.getElementById('mobile-sidebar');
+                        const sidebarOverlay = document.getElementById('sidebar-overlay');
+                        if (mobileSidebar) mobileSidebar.classList.remove('open');
+                        if (sidebarOverlay) sidebarOverlay.classList.remove('open');
+                    }
                 }
             }
             
@@ -5151,6 +5793,123 @@ $needsSetup = false; // Multi-account system handles setup automatically
                 
             }, 500);
         });
+        
+        // === BATCH CSV IMPORT FUNCTIONALITY ===
+        window.startBatchImport = function(csvData) {
+            const lines = csvData.split('\n').filter(line => line.trim());
+            const totalLines = lines.length;
+            
+            // Create progress modal
+            showBatchProgress(0, totalLines);
+            
+            // Start batch processing
+            processBatch(csvData, 0, 50, totalLines, 0, 0);
+        }
+        
+        function showBatchProgress(processed, total) {
+            const progressHtml = `
+                <div id="batch-progress-modal" style="position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.8); z-index: 9999; display: flex; align-items: center; justify-content: center;">
+                    <div style="background: rgba(30,30,30,0.95); padding: 30px; border-radius: 15px; text-align: center; min-width: 400px;">
+                        <h3 style="color: #FFD700; margin-bottom: 20px;">📊 Importing CSV Data</h3>
+                        <div style="background: rgba(0,0,0,0.3); padding: 15px; border-radius: 8px; margin-bottom: 20px;">
+                            <div style="color: #4CAF50; font-size: 18px; margin-bottom: 10px;" id="batch-progress-text">
+                                Processing: ${processed} / ${total} lines
+                            </div>
+                            <div style="background: rgba(255,255,255,0.1); height: 20px; border-radius: 10px; overflow: hidden;">
+                                <div id="batch-progress-bar" style="background: linear-gradient(90deg, #4CAF50, #FFD700); height: 100%; width: ${(processed/total)*100}%; transition: width 0.3s ease;"></div>
+                            </div>
+                            <div style="color: #888; font-size: 14px; margin-top: 10px;" id="batch-status">
+                                Importing bets in batches to prevent server overload...
+                            </div>
+                        </div>
+                        <div id="batch-results" style="color: #2196F3; font-size: 14px;">
+                            <!-- Results will appear here -->
+                        </div>
+                    </div>
+                </div>
+            `;
+            
+            // Remove existing modal if present
+            const existing = document.getElementById('batch-progress-modal');
+            if (existing) existing.remove();
+            
+            document.body.insertAdjacentHTML('beforeend', progressHtml);
+        }
+        
+        function updateBatchProgress(processed, total, currentBatch, importedCount, errorCount) {
+            const progressText = document.getElementById('batch-progress-text');
+            const progressBar = document.getElementById('batch-progress-bar');
+            const status = document.getElementById('batch-status');
+            const results = document.getElementById('batch-results');
+            
+            if (progressText) progressText.textContent = `Processing: ${processed} / ${total} lines`;
+            if (progressBar) progressBar.style.width = `${(processed/total)*100}%`;
+            if (status) status.textContent = `Batch ${currentBatch} completed. Imported: ${importedCount}, Errors: ${errorCount}`;
+            
+            if (results && processed >= total) {
+                results.innerHTML = `
+                    <div style="color: #4CAF50; font-weight: bold; margin-top: 10px;">
+                        ✅ Import Complete!<br>
+                        Total imported: ${importedCount} bets<br>
+                        ${errorCount > 0 ? `❌ Errors: ${errorCount}` : ''}
+                    </div>
+                `;
+                
+                setTimeout(() => {
+                    const modal = document.getElementById('batch-progress-modal');
+                    if (modal) modal.remove();
+                    location.reload(); // Refresh to show new data
+                }, 3000);
+            }
+        }
+        
+        async function processBatch(csvData, startLine, batchSize, totalLines, totalImported, totalErrors) {
+            try {
+                const response = await fetch('', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/x-www-form-urlencoded',
+                    },
+                    body: new URLSearchParams({
+                        action: 'import_csv_batch',
+                        csv_data: csvData,
+                        account_id: document.querySelector('input[name="account_id"]').value,
+                        start_line: startLine,
+                        batch_size: batchSize
+                    })
+                });
+                
+                const result = await response.json();
+                
+                if (result.batch_info) {
+                    const { current_batch, processed_lines, has_more_batches, next_start_line } = result.batch_info;
+                    
+                    totalImported += (result.count || 0);
+                    totalErrors += (result.errors || 0);
+                    
+                    updateBatchProgress(
+                        processed_lines, 
+                        totalLines, 
+                        current_batch,
+                        totalImported,
+                        totalErrors
+                    );
+                    
+                    if (has_more_batches && next_start_line !== null) {
+                        // Process next batch after a short delay
+                        setTimeout(() => {
+                            processBatch(csvData, next_start_line, batchSize, totalLines, totalImported, totalErrors);
+                        }, 500);
+                    }
+                } else {
+                    throw new Error('Invalid batch response');
+                }
+            } catch (error) {
+                console.error('Batch import error:', error);
+                const status = document.getElementById('batch-status');
+                if (status) status.textContent = '❌ Error: ' + error.message;
+            }
+        }
     </script>
     
     <!-- Floating AI Chat Widget -->
@@ -5191,8 +5950,10 @@ $needsSetup = false; // Multi-account system handles setup automatically
                     <?php if ($activeProvider): ?>
                     <span class="active-provider-badge"><?= strtoupper($activeProvider) ?></span>
                     <?php endif; ?>
+                    <div id="csv-ready-indicator" style="display: none; background: #FFD700; color: #000; padding: 3px 8px; border-radius: 12px; font-size: 10px; font-weight: bold; margin-left: 10px;">📋 CSV READY</div>
                 </div>
                 <div class="chat-controls">
+                    <button type="button" onclick="clearChatHistory()" class="chat-control-btn" title="Clear History" style="margin-right: 5px;">🗑️</button>
                     <button type="button" onclick="minimizeFloatingChat()" class="chat-control-btn" title="Minimize">➖</button>
                     <button type="button" onclick="closeFloatingChat()" class="chat-control-btn" title="Close">✕</button>
                 </div>
@@ -5339,6 +6100,9 @@ $needsSetup = false; // Multi-account system handles setup automatically
                 chatWindow.style.display = 'flex';
                 isFloatingChatMinimized = false;
                 isFloatingChatOpen = true;
+                
+                // Load chat history on first open
+                loadChatHistory();
                 
                 // Hide notification
                 document.getElementById('chat-notification').style.display = 'none';
@@ -5524,6 +6288,10 @@ $needsSetup = false; // Multi-account system handles setup automatically
         }
         
         function importCsvFromChat(csvData) {
+            // Debug logging
+            console.log('🔍 Import Debug - Account ID from PHP:', '<?= htmlspecialchars($currentAccountId ?? '') ?>');
+            console.log('🔍 Import Debug - CSV Data length:', csvData.length);
+            
             // Create a form and submit to import the CSV data
             const form = document.createElement('form');
             form.method = 'POST';
@@ -5537,7 +6305,18 @@ $needsSetup = false; // Multi-account system handles setup automatically
             const accountInput = document.createElement('input');
             accountInput.type = 'hidden';
             accountInput.name = 'account_id';
-            accountInput.value = '<?= htmlspecialchars($currentAccountId ?? '') ?>';
+            let accountId = '<?= htmlspecialchars($currentAccountId ?? '') ?>';
+            
+            // Fallback if account ID is empty
+            if (!accountId || accountId.trim() === '') {
+                accountId = 'standard_5k';
+                console.warn('🔍 Import Debug - Using fallback account ID:', accountId);
+            }
+            
+            accountInput.value = accountId;
+            
+            // Debug log the account ID being used
+            console.log('🔍 Import Debug - Form account_id:', accountInput.value);
             
             const csvInput = document.createElement('input');
             csvInput.type = 'hidden';

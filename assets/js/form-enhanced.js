@@ -231,7 +231,7 @@ class EnhancedForm {
 
     getCurrentAccountBalance() {
         // This would get actual account balance - placeholder for now
-        return 50000;
+        return 5000;
     }
 
     isProAccount() {
