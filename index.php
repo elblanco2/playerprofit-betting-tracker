@@ -273,10 +273,6 @@ class PlayerProfitTracker {
         }
     }
     
-    public function getApiKey($provider) {
-        return $this->apiKeyManager->getApiKey($provider);
-    }
-    
     public function initializeAccount($accountId) {
         $accounts = $this->getAllAccounts();
         if (!isset($accounts[$accountId])) {
