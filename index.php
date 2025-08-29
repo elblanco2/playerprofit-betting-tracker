@@ -328,7 +328,7 @@ class PlayerProfitTracker {
         file_put_contents($this->configFile, json_encode($config, JSON_PRETTY_PRINT));
     }
     
-    public function addBet($date, $sport, $selection, $stake, $odds, $result, $isParlay = false, $parlayLegs = []) {
+    public function addBet($date, $sport, $selection, $stake, $odds, $result, $isParlay = false, $parlayLegs = [], $importMode = false) {
         $config = $this->loadConfig();
         $data = $this->loadData();
         
@@ -339,26 +339,28 @@ class PlayerProfitTracker {
             $this->saveConfig($config); // Save the initialization
         }
         
-        // Validate bet size against account limits with drawdown protection
-        $limits = $this->getRiskLimits(
-            $config['account_tier'], 
-            $config['account_size'], 
-            $data['account_balance'], 
-            $config['highest_balance']
-        );
-        
-        if ($stake < $limits['min_risk'] || $stake > $limits['max_risk']) {
-            $errorMsg = "Bet size must be between $" . number_format($limits['min_risk'], 2) . " and $" . number_format($limits['max_risk'], 2);
-            $errorMsg .= " for " . $config['account_tier'] . " $" . number_format($config['account_size']) . " account";
+        // Validate bet size against account limits with drawdown protection (skip for imports)
+        if (!$importMode) {
+            $limits = $this->getRiskLimits(
+                $config['account_tier'], 
+                $config['account_size'], 
+                $data['account_balance'], 
+                $config['highest_balance']
+            );
             
-            if ($limits['drawdown_protected']) {
-                $errorMsg .= " (Drawdown protection active - betting limited due to 15% loss from peak)";
+            if ($stake < $limits['min_risk'] || $stake > $limits['max_risk']) {
+                $errorMsg = "Bet size must be between $" . number_format($limits['min_risk'], 2) . " and $" . number_format($limits['max_risk'], 2);
+                $errorMsg .= " for " . $config['account_tier'] . " $" . number_format($config['account_size']) . " account";
+                
+                if ($limits['drawdown_protected']) {
+                    $errorMsg .= " (Drawdown protection active - betting limited due to 15% loss from peak)";
+                }
+                
+                return [
+                    'success' => false, 
+                    'error' => $errorMsg
+                ];
             }
-            
-            return [
-                'success' => false, 
-                'error' => $errorMsg
-            ];
         }
         
         // Calculate P&L
@@ -903,7 +905,8 @@ class PlayerProfitTracker {
                     $bet['odds'], 
                     $bet['result'], 
                     false, 
-                    []
+                    [],
+                    true  // Import mode - bypass bet size validation
                 );
                 
                 // Debug logging
@@ -1057,8 +1060,9 @@ class PlayerProfitTracker {
             // Store old bet for balance recalculation
             $oldBet = $data['bets'][$betIndex];
             
-            // Validate new data
-            if (empty($date) || empty($sport) || empty($selection) || $stake <= 0 || $odds == 0) {
+            // Validate new data - FIXED: Allow odds=0 for PUSH/REFUNDED bets
+            $allowZeroOdds = in_array($result, ['PUSH', 'REFUNDED', 'CASHED OUT']);
+            if (empty($date) || empty($sport) || empty($selection) || $stake <= 0 || ($odds == 0 && !$allowZeroOdds)) {
                 return ['success' => false, 'error' => 'Invalid bet data'];
             }
             
@@ -1509,7 +1513,7 @@ OUTPUT (CSV only, no explanations):";
         }
 
         // Build conversation prompt for chat context
-        $systemPrompt = "You are an expert betting data analyst helping users format their betting history for the PlayerProfit tracking system. Your job is to:\n\n1. Help users understand the required CSV format: Date,Sport,Selection,Stake,Odds,Result\n2. Convert unstructured betting data into proper CSV format\n3. Answer questions about betting data formatting\n4. Provide guidance on PlayerProfit compliance rules\n5. Handle parlay bets with reverse odds calculation\n\nWhen users paste betting data, convert it to CSV format. When they ask questions, provide helpful guidance.\n\n⚠️ CRITICAL: PROCESS EVERY SINGLE BET - NO EXCEPTIONS!\n- NEVER skip any bets, regardless of format issues\n- NEVER truncate your output due to length\n- NEVER abbreviate or summarize bet data  \n- COUNT your output lines and ensure they match the input bet count\n- If you encounter ANY bet you're unsure about, include it anyway with best-guess formatting\n- ALWAYS finish processing the complete dataset even if response is very long\n\nFor large datasets: Process ALL bets provided by the user. Do not truncate or abbreviate the output. Complete the entire CSV conversion even if it results in a long response.\n\nRequired CSV format:\n- Date: YYYY-MM-DD format\n- Sport: NFL, NBA, MLB, NHL, Tennis, Soccer, etc.\n- Selection: Team name + bet type (e.g., 'Patriots ML', 'Lakers +5.5')\n- Stake: Numeric value (no currency symbols)\n- Odds: American format (-110, +120, etc.)\n- Result: WIN, LOSS, PUSH, REFUNDED, or CASHED OUT\n\nMISSING ODDS CALCULATION (CRITICAL):\nWhen betting data lacks odds (especially parlays), you MUST calculate them from stake and payout data:\n\nWINNING BETS (Singles or Parlays):\n1. Find stake amount: Look for \"bet\", \"risked\", \"wagered\", \"staked\"\n2. Find total payout: Look for \"won\", \"return\", \"payout\", \"total received\", \"paid out\"\n3. Calculate: profit = total_payout - stake\n4. Calculate: ratio = profit ÷ stake\n5. Convert to American odds:\n   - If ratio ≥ 1: odds = +[ratio × 100] (round to nearest whole number)\n   - If ratio < 1: odds = -[100 ÷ ratio] (round to nearest whole number)\n\nEXAMPLES OF REVERSE CALCULATION:\n- \"3-leg parlay, bet \\$500, won \\$2400\" → profit=1900, ratio=3.8, odds=+380\n- \"Parlay: \\$1000 stake, \\$1800 total return\" → profit=800, ratio=0.8, odds=-125\n- \"4-team combo won \\$3500 on \\$1000 bet\" → profit=2500, ratio=2.5, odds=+250\n- \"Single bet: \\$100 stake, \\$190 total payout\" → profit=90, ratio=0.9, odds=-111\n- \"2-leg parlay risked \\$200, profit \\$150\" → total_payout=350, ratio=0.75, odds=-133\n\nLOSING BETS:\n- Always use -110 as placeholder (exact odds irrelevant for losses)\n\nPARLAY IDENTIFICATION:\nLook for: \"parlay\", \"combo\", \"multi\", \"leg\", \"teaser\", \"round robin\"\nSport: Use \"Multi\" for multi-sport parlays, or dominant sport if same sport\n\nBET RESULT TYPES (CRITICAL FOR P&L CALCULATION):\n- WIN: Bet won normally - calculate profit based on odds\n- LOSS: Bet lost normally - full stake amount lost (-stake)\n- PUSH: Tie/No action - ZERO P&L (stake returned, no profit/loss)\n- REFUNDED: Bet cancelled/voided - ZERO P&L (stake returned, no profit/loss)\n- CASHED OUT: User cashed out early for partial payout\n\nIMPORTANT: PUSH and REFUNDED bets have ZERO impact on profit/loss calculation. They return the original stake with no gain or loss. Always include them in the CSV data but mark them clearly as PUSH or REFUNDED.\n\nCRITICAL RULES:\n- NEVER skip bets due to missing odds\n- ALWAYS include ALL bets found in raw data  \n- Calculate odds for winners, use -110 for losers\n- Double-check profit calculations before converting to odds\n\nCOMMON TERMS TO MAP:\n- PUSH: 'Tie', 'No Action', 'Draw', 'Even', 'P'\n- REFUNDED: 'Void', 'Cancelled', 'Canceled', 'Refund', 'Postponed', 'Suspended'\n\nExample CSV with all result types:\n2025-01-15,NFL,Patriots ML,1000,-110,WIN\n2025-01-14,NBA,Lakers +5.5,1500,-105,LOSS\n2025-01-13,Multi,3-leg Parlay,500,+240,WIN\n2025-01-12,Multi,2-team Parlay,1000,-110,LOSS\n2025-01-11,NBA,Celtics ML,800,-120,PUSH\n2025-01-10,NFL,Chiefs +3,1200,+105,REFUNDED";
+        $systemPrompt = "You are an expert betting data analyst helping users format their betting history for the PlayerProfit tracking system. Your job is to:\n\n1. Help users understand the required CSV format: Date,Sport,Selection,Stake,Odds,Result\n2. Convert unstructured betting data into proper CSV format\n3. Answer questions about betting data formatting\n4. Provide guidance on PlayerProfit compliance rules\n5. Handle parlay bets with reverse odds calculation\n\nWhen users paste betting data, convert it to CSV format. When they ask questions, provide helpful guidance.\n\n⚠️ CRITICAL: PROCESS EVERY SINGLE BET - NO EXCEPTIONS!\n- NEVER skip any bets, regardless of format issues\n- NEVER truncate your output due to length\n- NEVER abbreviate or summarize bet data  \n- COUNT your output lines and ensure they match the input bet count\n- If you encounter ANY bet you're unsure about, include it anyway with best-guess formatting\n- ALWAYS finish processing the complete dataset even if response is very long\n\nFor large datasets: Process ALL bets provided by the user. Do not truncate or abbreviate the output. Complete the entire CSV conversion even if it results in a long response.\n\nRequired CSV format:\n- Date: YYYY-MM-DD format\n- Sport: NFL, NBA, MLB, NHL, Tennis, Soccer, etc.\n- Selection: Team name + bet type (e.g., 'Patriots ML', 'Lakers +5.5')\n- Stake: Numeric value (no currency symbols)\n- Odds: American format (-110, +120, etc.)\n- Result: WIN, LOSS, PUSH, REFUNDED, or CASHED OUT\n\nMISSING ODDS CALCULATION (CRITICAL):\nWhen betting data lacks odds (especially parlays), you MUST calculate them from stake and payout data:\n\nWINNING BETS (Singles or Parlays):\n1. Find stake amount: Look for \"bet\", \"risked\", \"wagered\", \"staked\"\n2. Find total payout: Look for \"won\", \"return\", \"payout\", \"total received\", \"paid out\"\n3. Calculate: profit = total_payout - stake\n4. Calculate: ratio = profit ÷ stake\n5. Convert to American odds:\n   - If ratio ≥ 1: odds = +[ratio × 100] (round to nearest whole number)\n   - If ratio < 1: odds = -[100 ÷ ratio] (round to nearest whole number)\n\nEXAMPLES OF REVERSE CALCULATION:\n- \"3-leg parlay, bet \\$500, won \\$2400\" → profit=1900, ratio=3.8, odds=+380\n- \"Parlay: \\$1000 stake, \\$1800 total return\" → profit=800, ratio=0.8, odds=-125\n- \"4-team combo won \\$3500 on \\$1000 bet\" → profit=2500, ratio=2.5, odds=+250\n- \"Single bet: \\$100 stake, \\$190 total payout\" → profit=90, ratio=0.9, odds=-111\n- \"2-leg parlay risked \\$200, profit \\$150\" → total_payout=350, ratio=0.75, odds=-133\n\nLOSING BETS:\n- Always use -110 as placeholder (exact odds irrelevant for losses)\n\nPUSH/REFUNDED BETS:\n- Use -110 as placeholder odds (exact odds irrelevant since P&L is zero)\n- NEVER use odds=0 (causes import validation issues)\n\nPARLAY IDENTIFICATION:\nLook for: \"parlay\", \"combo\", \"multi\", \"leg\", \"teaser\", \"round robin\"\nSport: Use \"Multi\" for multi-sport parlays, or dominant sport if same sport\n\nBET RESULT TYPES (CRITICAL FOR P&L CALCULATION):\n- WIN: Bet won normally - calculate profit based on odds\n- LOSS: Bet lost normally - full stake amount lost (-stake)\n- PUSH: Tie/No action - ZERO P&L (stake returned, no profit/loss)\n- REFUNDED: Bet cancelled/voided - ZERO P&L (stake returned, no profit/loss)\n- CASHED OUT: User cashed out early for partial payout\n\nIMPORTANT: PUSH and REFUNDED bets have ZERO impact on profit/loss calculation. They return the original stake with no gain or loss. Always include them in the CSV data but mark them clearly as PUSH or REFUNDED.\n\nCRITICAL RULES:\n- NEVER skip bets due to missing odds\n- ALWAYS include ALL bets found in raw data  \n- Calculate odds for winners, use -110 for losers\n- Double-check profit calculations before converting to odds\n\nCOMMON TERMS TO MAP:\n- PUSH: 'Tie', 'No Action', 'Draw', 'Even', 'P'\n- REFUNDED: 'Void', 'Cancelled', 'Canceled', 'Refund', 'Postponed', 'Suspended'\n\nExample CSV with all result types:\n2025-01-15,NFL,Patriots ML,1000,-110,WIN\n2025-01-14,NBA,Lakers +5.5,1500,-105,LOSS\n2025-01-13,Multi,3-leg Parlay,500,+240,WIN\n2025-01-12,Multi,2-team Parlay,1000,-110,LOSS\n2025-01-11,NBA,Celtics ML,800,-120,PUSH\n2025-01-10,NFL,Chiefs +3,1200,+105,REFUNDED";
 
         $chatPrompt = $systemPrompt . "\n\nUser: " . $userMessage . "\n\nAssistant:";
         
@@ -1534,10 +1538,19 @@ OUTPUT (CSV only, no explanations):";
         $batchSystemPrompt = "You are processing a BATCH of betting data. This is part " . "X" . " of a larger dataset.\n\n" .
         "CRITICAL BATCH RULES:\n" .
         "- Process ALL bets in this batch - no truncation allowed\n" .
-        "- Output ONLY the CSV data lines (no headers, no explanations)\n" .
-        "- Use format: Date,Sport,Selection,Stake,Odds,Result\n" .
-        "- Calculate missing odds from stake/payout data\n" .
-        "- Include ALL bet types: WIN, LOSS, PUSH, REFUNDED\n\n" .
+        "- Output ONLY the CSV data lines (no headers, no explanations, no extra text)\n" .
+        "- Use EXACT format: Date,Sport,Selection,Stake,Odds,Result\n\n" .
+        "FORMAT REQUIREMENTS:\n" .
+        "- Date: YYYY-MM-DD format (e.g., 2023-08-27, NOT Aug 27,2023)\n" .
+        "- Sport: Single word (Baseball, Football, Basketball, Tennis, etc.)\n" .
+        "- Selection: Brief description (e.g., 'Patriots ML', 'Over 8.5')\n" .
+        "- Stake: Decimal number (e.g., 50.00, 100.50)\n" .
+        "- Odds: American odds as decimal (e.g., -110, +120, 1.85)\n" .
+        "- Result: EXACTLY one of: WIN, LOSS, PUSH, REFUNDED\n" .
+        "- For PUSH/REFUNDED: Use -110 as odds (never use 0)\n\n" .
+        "EXAMPLE OUTPUT:\n" .
+        "2023-08-27,Baseball,Marlins Over 8.5,50.00,-112,WIN\n" .
+        "2023-08-26,Baseball,Yankees ML,100.00,-120,LOSS\n\n" .
         "Convert this betting data batch to CSV format:";
         
         foreach ($chunks as $chunkIndex => $chunk) {
@@ -1548,26 +1561,108 @@ OUTPUT (CSV only, no explanations):";
             
             $chunkResult = $this->callLLMAPI($chunkPrompt, $apiKey, $provider);
             
+            // Enhanced error logging for batch chunks
+            error_log("🔍 BATCH CHUNK DEBUG - Chunk " . ($chunkIndex + 1) . " result: " . json_encode([
+                'success' => $chunkResult['success'] ?? false,
+                'has_response' => isset($chunkResult['response']),
+                'response_length' => isset($chunkResult['response']) ? strlen($chunkResult['response']) : 0,
+                'error' => $chunkResult['error'] ?? 'No error field'
+            ]));
+            
             if ($chunkResult['success'] && isset($chunkResult['response'])) {
+                // Log actual AI response for debugging
+                error_log("🔍 BATCH AI RESPONSE - Chunk " . ($chunkIndex + 1) . " response preview: " . substr($chunkResult['response'], 0, 500) . "...");
+                
                 // Extract CSV lines from the response
                 $lines = explode("\n", trim($chunkResult['response']));
                 $csvLinesInChunk = 0;
+            } else {
+                // Enhanced debugging for missing response
+                error_log("🔍 BATCH RESPONSE DEBUG - Chunk " . ($chunkIndex + 1) . " missing response. Full result: " . json_encode($chunkResult));
+                if ($chunkResult['success'] && isset($chunkResult['message'])) {
+                    error_log("🔍 BATCH FALLBACK - Using 'message' field instead of 'response'");
+                    $lines = explode("\n", trim($chunkResult['message']));
+                    $csvLinesInChunk = 0;
+                } else {
+                    $errorMsg = $chunkResult['error'] ?? 'Unknown error - no error field in response';
+                    if (empty($errorMsg)) {
+                        $errorMsg = 'Empty response from API';
+                    }
+                    $batchErrors[] = "Chunk " . ($chunkIndex + 1) . " failed: " . $errorMsg;
+                    error_log("🔍 BATCH ERROR - Chunk " . ($chunkIndex + 1) . " failed: " . $errorMsg);
+                    continue;
+                }
+            }
+            
+            if (isset($lines)) {
                 
-                foreach ($lines as $line) {
+                foreach ($lines as $lineIndex => $line) {
                     $line = trim($line);
-                    // Validate CSV format
-                    if (preg_match('/^\d{4}-\d{2}-\d{2},[^,]*,[^,]*,[\d.]+,[-+]?\d+,(WIN|LOSS|PUSH|REFUNDED|CASHED OUT)$/i', $line)) {
-                        $allCsvLines[] = $line;
+                    if (empty($line)) continue;
+                    
+                    // Log first few lines for debugging
+                    if ($lineIndex < 3) {
+                        error_log("🔍 BATCH LINE DEBUG - Chunk " . ($chunkIndex + 1) . " line $lineIndex: '" . $line . "'");
+                    }
+                    
+                    // Try to fix common format issues before validation
+                    $fixedLine = $line;
+                    
+                    // Fix date format: "Aug 27,2023" -> "2023-08-27"
+                    if (preg_match('/^([A-Za-z]{3}) (\d{1,2}),(\d{4})/', $fixedLine, $dateMatches)) {
+                        $months = [
+                            'Jan' => '01', 'Feb' => '02', 'Mar' => '03', 'Apr' => '04',
+                            'May' => '05', 'Jun' => '06', 'Jul' => '07', 'Aug' => '08', 
+                            'Sep' => '09', 'Oct' => '10', 'Nov' => '11', 'Dec' => '12'
+                        ];
+                        if (isset($months[$dateMatches[1]])) {
+                            $newDate = $dateMatches[3] . '-' . $months[$dateMatches[1]] . '-' . str_pad($dateMatches[2], 2, '0', STR_PAD_LEFT);
+                            $fixedLine = str_replace($dateMatches[0], $newDate, $fixedLine);
+                        }
+                    }
+                    
+                    // Fix result format: "Won" -> "WIN", "Lost" -> "LOSS"
+                    $fixedLine = preg_replace('/,Won$/i', ',WIN', $fixedLine);
+                    $fixedLine = preg_replace('/,Lost$/i', ',LOSS', $fixedLine);
+                    $fixedLine = preg_replace('/,Push$/i', ',PUSH', $fixedLine);
+                    $fixedLine = preg_replace('/,Refunded$/i', ',REFUNDED', $fixedLine);
+                    
+                    // Fix odds=0 for PUSH/REFUNDED bets - replace with -110
+                    if (preg_match('/,0,(PUSH|REFUNDED)$/i', $fixedLine)) {
+                        $fixedLine = preg_replace('/,0,(PUSH|REFUNDED)$/i', ',-110,$1', $fixedLine);
+                    }
+                    
+                    // Count the number of commas to see if we have the right structure
+                    $commaCount = substr_count($fixedLine, ',');
+                    
+                    // Try to handle lines with extra columns by extracting the core 6 fields
+                    if ($commaCount >= 5) {
+                        $parts = explode(',', $fixedLine);
+                        if (count($parts) >= 6) {
+                            // Take first 6 parts for the standard format
+                            $fixedLine = implode(',', array_slice($parts, 0, 6));
+                        }
+                    }
+                    
+                    // Validate CSV format with more flexible regex
+                    if (preg_match('/^\d{4}-\d{2}-\d{2},[^,]*,[^,]*,[\d.]+,[-+]?[\d.]+,(WIN|LOSS|PUSH|REFUNDED)$/i', $fixedLine)) {
+                        $allCsvLines[] = $fixedLine;
                         $csvLinesInChunk++;
+                        if ($lineIndex < 3) {
+                            error_log("🔍 BATCH SUCCESS - Fixed line $lineIndex: '" . $fixedLine . "'");
+                        }
+                    } else {
+                        // Log why line didn't match (only first few for debugging)
+                        if ($lineIndex < 5) {
+                            error_log("🔍 BATCH REGEX DEBUG - Original: '" . $line . "'");
+                            error_log("🔍 BATCH REGEX DEBUG - Fixed: '" . $fixedLine . "'");
+                            error_log("🔍 BATCH REGEX DEBUG - Comma count: " . substr_count($fixedLine, ','));
+                        }
                     }
                 }
                 
                 $totalProcessed += $csvLinesInChunk;
                 error_log("🔍 BATCH DEBUG - Chunk " . ($chunkIndex + 1) . " produced " . $csvLinesInChunk . " valid CSV lines");
-                
-            } else {
-                $batchErrors[] = "Chunk " . ($chunkIndex + 1) . " failed: " . ($chunkResult['error'] ?? 'Unknown error');
-                error_log("🔍 BATCH ERROR - Chunk " . ($chunkIndex + 1) . " failed: " . ($chunkResult['error'] ?? 'Unknown error'));
             }
             
             // Brief delay between API calls to avoid rate limiting
@@ -1575,9 +1670,11 @@ OUTPUT (CSV only, no explanations):";
         }
         
         if (empty($allCsvLines)) {
+            $errorMessage = 'No valid CSV data produced from batches. Errors: ' . implode('; ', $batchErrors);
             return [
                 'success' => false,
-                'error' => 'No valid CSV data produced from batches. Errors: ' . implode('; ', $batchErrors)
+                'error' => $errorMessage,
+                'message' => '❌ ' . $errorMessage  // FIXED: Added message field for frontend compatibility
             ];
         }
         
@@ -1587,15 +1684,18 @@ OUTPUT (CSV only, no explanations):";
         error_log("🔍 BATCH FINAL DEBUG - Total CSV lines produced: " . count($allCsvLines));
         error_log("🔍 BATCH FINAL DEBUG - Batch errors: " . count($batchErrors));
         
-        // Return in the same format as regular chat
-        return [
-            'success' => true,
-            'response' => "📊 **Batch Processing Complete!**\n\n" .
+        // Return in the same format as regular chat - FIXED: Added message field
+        $responseMessage = "📊 **Batch Processing Complete!**\n\n" .
                          "Processed **" . count($chunks) . " batches** of your betting data.\n" .
                          "Found **" . count($allCsvLines) . " betting records** total.\n\n" .
                          "**📥 Ready to Import**\n" .
                          "```csv\n" . $combinedCsv . "\n```\n\n" .
-                         "All " . count($allCsvLines) . " bets are ready for import! Click the Import button above."
+                         "All " . count($allCsvLines) . " bets are ready for import! Click the Import button above.";
+        
+        return [
+            'success' => true,
+            'response' => $responseMessage,
+            'message' => $responseMessage  // FIXED: Added message field for frontend compatibility
         ];
     }
     
@@ -1732,7 +1832,8 @@ OUTPUT (CSV only, no explanations):";
 
         return [
             'success' => true,
-            'message' => trim($assistantMessage),
+            'response' => trim($assistantMessage),
+            'message' => trim($assistantMessage), // Keep both for compatibility
             'provider' => $provider
         ];
     }
@@ -2130,12 +2231,20 @@ if ($_POST) {
         }
         
         if (empty($userMessage)) {
-            echo json_encode(['success' => false, 'error' => 'Missing required message']);
+            echo json_encode([
+                'success' => false, 
+                'error' => 'Missing required message',
+                'message' => '❌ Missing required message'
+            ]);
             exit;
         }
         
         if (empty($apiKey)) {
-            echo json_encode(['success' => false, 'error' => 'No API key configured. Please configure an API key first.']);
+            echo json_encode([
+                'success' => false, 
+                'error' => 'No API key configured. Please configure an API key first.',
+                'message' => '❌ No API key configured. Please configure an API key first.'
+            ]);
             exit;
         }
         
@@ -2404,9 +2513,11 @@ if (isset($_POST['action']) && $_POST['action'] === 'import_csv_paste') {
         echo "<script>window.startBatchImport(`" . addslashes($csvData) . "`);</script>";
         $message = "⏳ Large CSV detected (" . count($lines) . " lines). Processing in batches...";
     } else {
-        // Process small imports normally
+        // Process small imports normally - FIXED: Set large batch size to process all lines
         $importTracker = new PlayerProfitTracker($accountId);
-        $importResult = $importTracker->importCSVData($csvData);
+        $lineCount = substr_count($csvData, "\n");
+        error_log("🔍 CSV IMPORT DEBUG - Setting batch size to process all $lineCount lines");
+        $importResult = $importTracker->importCSVData($csvData, max($lineCount, 200), 0);
         
         if ($importResult['success'] && $importResult['count'] > 0) {
             $message = "✅ Successfully imported " . $importResult['count'] . " bets to account '$accountId'! New balance: $" . number_format($importResult['new_balance'], 2);
@@ -5477,7 +5588,12 @@ $needsSetup = false; // Multi-account system handles setup automatically
                 clearTimeout(timeoutId);
                 clearTimeout(progressTimeoutId);
                 
-                const result = await response.json();
+                let result;
+                try {
+                    result = await response.json();
+                } catch (jsonError) {
+                    throw new Error('Invalid response format from server');
+                }
                 
                 if (result.success) {
                     addChatMessage('assistant', result.message);
@@ -5490,8 +5606,10 @@ $needsSetup = false; // Multi-account system handles setup automatically
                     
                     chatStatus.innerHTML = `<span style="color: #4CAF50;">✅ Response received</span>`;
                 } else {
-                    addChatMessage('assistant', `❌ Error: ${result.error}`);
-                    chatStatus.innerHTML = `<span style="color: #f44336;">❌ Error: ${result.error}</span>`;
+                    // FIXED: Better error message handling - try message field first, then error
+                    const errorMsg = result.message || result.error || 'Unknown error occurred';
+                    addChatMessage('assistant', errorMsg.startsWith('❌') ? errorMsg : `❌ Error: ${errorMsg}`);
+                    chatStatus.innerHTML = `<span style="color: #f44336;">${errorMsg.startsWith('❌') ? errorMsg : `❌ Error: ${errorMsg}`}</span>`;
                 }
                 
             } catch (error) {
@@ -6184,7 +6302,12 @@ $needsSetup = false; // Multi-account system handles setup automatically
                     throw new Error(`HTTP ${response.status}: ${response.statusText}`);
                 }
                 
-                const result = await response.json();
+                let result;
+                try {
+                    result = await response.json();
+                } catch (jsonError) {
+                    throw new Error('Invalid response format from server');
+                }
                 console.log('Chat response:', result); // Debug log
                 
                 // Remove typing indicator
@@ -6199,7 +6322,9 @@ $needsSetup = false; // Multi-account system handles setup automatically
                         addImportButton(result.message);
                     }
                 } else {
-                    addFloatingChatMessage('❌ Error: ' + (result.error || 'Failed to process message'), 'assistant');
+                    // FIXED: Better error message handling - try message field first, then error
+                    const errorMsg = result.message || result.error || 'Failed to process message';
+                    addFloatingChatMessage(errorMsg.startsWith('❌') ? errorMsg : '❌ ' + errorMsg, 'assistant');
                 }
             } catch (error) {
                 removeTypingIndicator();
