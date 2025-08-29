@@ -328,7 +328,7 @@ class PlayerProfitTracker {
         file_put_contents($this->configFile, json_encode($config, JSON_PRETTY_PRINT));
     }
     
-    public function addBet($date, $sport, $selection, $stake, $odds, $result, $isParlay = false, $parlayLegs = [], $importMode = false) {
+    public function addBet($date, $sport, $selection, $stake, $odds, $result, $isParlay = false, $parlayLegs = [], $importMode = false, $exactProfit = null) {
         $config = $this->loadConfig();
         $data = $this->loadData();
         
@@ -363,8 +363,10 @@ class PlayerProfitTracker {
             }
         }
         
-        // Calculate P&L
-        if ($isParlay && !empty($parlayLegs)) {
+        // Calculate P&L - Use exact profit if provided (for imports)
+        if ($exactProfit !== null) {
+            $pnl = $exactProfit;
+        } else if ($isParlay && !empty($parlayLegs)) {
             $parlayOdds = $this->calculateParlayOdds($parlayLegs);
             $pnl = $this->calculatePayout($stake, $parlayOdds, $result);
         } else {
@@ -880,6 +882,7 @@ class PlayerProfitTracker {
                 'stake' => $stake,
                 'odds' => $odds,
                 'result' => $result,
+                'exactProfit' => $exactProfit,
                 'is_duplicate' => $isDuplicate,
                 'date_obj' => $dateObj
             ];
@@ -1513,7 +1516,7 @@ OUTPUT (CSV only, no explanations):";
         }
 
         // Build conversation prompt for chat context
-        $systemPrompt = "You are an expert betting data analyst helping users format their betting history for the PlayerProfit tracking system. Your job is to:\n\n1. Help users understand the required CSV format: Date,Sport,Selection,Stake,Odds,Result\n2. Convert unstructured betting data into proper CSV format\n3. Answer questions about betting data formatting\n4. Provide guidance on PlayerProfit compliance rules\n5. Handle parlay bets with reverse odds calculation\n\nWhen users paste betting data, convert it to CSV format. When they ask questions, provide helpful guidance.\n\n⚠️ CRITICAL: PROCESS EVERY SINGLE BET - NO EXCEPTIONS!\n- NEVER skip any bets, regardless of format issues\n- NEVER truncate your output due to length\n- NEVER abbreviate or summarize bet data  \n- COUNT your output lines and ensure they match the input bet count\n- If you encounter ANY bet you're unsure about, include it anyway with best-guess formatting\n- ALWAYS finish processing the complete dataset even if response is very long\n\nFor large datasets: Process ALL bets provided by the user. Do not truncate or abbreviate the output. Complete the entire CSV conversion even if it results in a long response.\n\nRequired CSV format:\n- Date: YYYY-MM-DD format\n- Sport: NFL, NBA, MLB, NHL, Tennis, Soccer, etc.\n- Selection: Team name + bet type (e.g., 'Patriots ML', 'Lakers +5.5')\n- Stake: Numeric value (no currency symbols)\n- Odds: American format (-110, +120, etc.)\n- Result: WIN, LOSS, PUSH, REFUNDED, or CASHED OUT\n\nMISSING ODDS CALCULATION (CRITICAL):\nWhen betting data lacks odds (especially parlays), you MUST calculate them from stake and payout data:\n\nWINNING BETS (Singles or Parlays):\n1. Find stake amount: Look for \"bet\", \"risked\", \"wagered\", \"staked\"\n2. Find total payout: Look for \"won\", \"return\", \"payout\", \"total received\", \"paid out\"\n3. Calculate: profit = total_payout - stake\n4. Calculate: ratio = profit ÷ stake\n5. Convert to American odds:\n   - If ratio ≥ 1: odds = +[ratio × 100] (round to nearest whole number)\n   - If ratio < 1: odds = -[100 ÷ ratio] (round to nearest whole number)\n\nEXAMPLES OF REVERSE CALCULATION:\n- \"3-leg parlay, bet \\$500, won \\$2400\" → profit=1900, ratio=3.8, odds=+380\n- \"Parlay: \\$1000 stake, \\$1800 total return\" → profit=800, ratio=0.8, odds=-125\n- \"4-team combo won \\$3500 on \\$1000 bet\" → profit=2500, ratio=2.5, odds=+250\n- \"Single bet: \\$100 stake, \\$190 total payout\" → profit=90, ratio=0.9, odds=-111\n- \"2-leg parlay risked \\$200, profit \\$150\" → total_payout=350, ratio=0.75, odds=-133\n\nLOSING BETS:\n- Always use -110 as placeholder (exact odds irrelevant for losses)\n\nPUSH/REFUNDED BETS:\n- Use -110 as placeholder odds (exact odds irrelevant since P&L is zero)\n- NEVER use odds=0 (causes import validation issues)\n\nPARLAY IDENTIFICATION:\nLook for: \"parlay\", \"combo\", \"multi\", \"leg\", \"teaser\", \"round robin\"\nSport: Use \"Multi\" for multi-sport parlays, or dominant sport if same sport\n\nBET RESULT TYPES (CRITICAL FOR P&L CALCULATION):\n- WIN: Bet won normally - calculate profit based on odds\n- LOSS: Bet lost normally - full stake amount lost (-stake)\n- PUSH: Tie/No action - ZERO P&L (stake returned, no profit/loss)\n- REFUNDED: Bet cancelled/voided - ZERO P&L (stake returned, no profit/loss)\n- CASHED OUT: User cashed out early for partial payout\n\nIMPORTANT: PUSH and REFUNDED bets have ZERO impact on profit/loss calculation. They return the original stake with no gain or loss. Always include them in the CSV data but mark them clearly as PUSH or REFUNDED.\n\nCRITICAL RULES:\n- NEVER skip bets due to missing odds\n- ALWAYS include ALL bets found in raw data  \n- Calculate odds for winners, use -110 for losers\n- Double-check profit calculations before converting to odds\n\nCOMMON TERMS TO MAP:\n- PUSH: 'Tie', 'No Action', 'Draw', 'Even', 'P'\n- REFUNDED: 'Void', 'Cancelled', 'Canceled', 'Refund', 'Postponed', 'Suspended'\n\nExample CSV with all result types:\n2025-01-15,NFL,Patriots ML,1000,-110,WIN\n2025-01-14,NBA,Lakers +5.5,1500,-105,LOSS\n2025-01-13,Multi,3-leg Parlay,500,+240,WIN\n2025-01-12,Multi,2-team Parlay,1000,-110,LOSS\n2025-01-11,NBA,Celtics ML,800,-120,PUSH\n2025-01-10,NFL,Chiefs +3,1200,+105,REFUNDED";
+        $systemPrompt = "You are an expert betting data analyst helping users format their PlayerProfit betting history with 100% accuracy. Your job is to:\n\n1. Extract EXACT profit values from PlayerProfit data\n2. Convert to enhanced CSV format: Date,Sport,Selection,Stake,Odds,Result,Profit\n3. Validate calculations before output\n4. Ensure perfect balance matching with PlayerProfit\n\n⚠️ CRITICAL: PROCESS EVERY SINGLE BET - NO EXCEPTIONS!\n- NEVER skip any bets, regardless of format issues\n- NEVER truncate your output due to length\n- NEVER abbreviate or summarize bet data\n- COUNT your output lines and ensure they match the input bet count\n- ALWAYS finish processing the complete dataset\n\n🎯 PROFIT-FIRST ACCURACY SYSTEM:\nFor PlayerProfit data, ALWAYS extract the exact \"Profit\" value:\n- Look for \"Profit: 714.29\" → Use 714.29 as 7th CSV field\n- Look for \"Profit: -1000.00\" → Use -1000.00 as 7th CSV field\n- This ensures 100% balance accuracy with PlayerProfit\n\nRequired CSV format (7 fields):\n- Date: YYYY-MM-DD format\n- Sport: NFL, NBA, MLB, NHL, Tennis, Soccer, etc.\n- Selection: Team name + bet type (e.g., 'Patriots ML', 'Lakers +5.5')\n- Stake: Numeric value from \"Total Pick\" field\n- Odds: American format (-110, +120, etc.) - calculate from profit for reference\n- Result: WIN, LOSS, PUSH, REFUNDED, or CASHED OUT\n- Profit: EXACT profit value from PlayerProfit (e.g., 714.29, -1000.00)\n\nODDS CALCULATION & VALIDATION:\n1. Extract stake from \"Total Pick\" field\n2. Extract exact profit from \"Profit\" field\n3. Calculate odds for reference: ratio = profit ÷ stake\n   - If ratio ≥ 1: odds = +[ratio × 100]\n   - If ratio < 1: odds = -[100 ÷ ratio]\n4. VALIDATE: Check if calculated odds make sense\n5. If validation fails, flag with warning but include bet anyway\n\nEXAMPLE EXTRACTIONS:\n- \"Total Pick: 1000.00, Profit: 714.29\" → ratio=0.714 → odds=-140\n- \"Total Pick: 1200.00, Profit: 833.33\" → ratio=0.694 → odds=-144\n- \"Total Pick: 1000.00, Profit: 2551.75\" → ratio=2.552 → odds=+255\n\nValidation Examples:\n2023-08-15,MLB,Colin Rea Under 17.5,1000.00,-140,WIN,714.29\n2023-08-14,MLB,Matthew Boyd Over 17.5,1000.00,-144,WIN,833.33\n2023-08-04,Multi,3-leg Parlay,1000.00,+255,WIN,2551.75\n2023-08-27,MLB,Tampa Bay Rays ML,1000.00,-110,LOSS,-1000.00\n\nCRITICAL VALIDATION RULES:\n- ALWAYS extract exact \"Profit\" values from PlayerProfit\n- VALIDATE calculated odds match expected ranges\n- FLAG any major discrepancies between displayed odds and calculated odds\n- Include all bets even if validation concerns exist";
 
         $chatPrompt = $systemPrompt . "\n\nUser: " . $userMessage . "\n\nAssistant:";
         
@@ -1535,23 +1538,26 @@ OUTPUT (CSV only, no explanations):";
         $batchErrors = [];
         
         // Create a specialized system prompt for batch processing
-        $batchSystemPrompt = "You are processing a BATCH of betting data. This is part " . "X" . " of a larger dataset.\n\n" .
-        "CRITICAL BATCH RULES:\n" .
+        $batchSystemPrompt = "You are processing a BATCH of PlayerProfit betting data. This is part " . "X" . " of a larger dataset.\n\n" .
+        "🎯 PROFIT-FIRST ACCURACY SYSTEM:\n" .
+        "- Extract EXACT \"Profit\" values from PlayerProfit data\n" .
+        "- Output format: Date,Sport,Selection,Stake,Odds,Result,Profit\n" .
+        "- Calculate odds from profit for validation\n" .
         "- Process ALL bets in this batch - no truncation allowed\n" .
-        "- Output ONLY the CSV data lines (no headers, no explanations, no extra text)\n" .
-        "- Use EXACT format: Date,Sport,Selection,Stake,Odds,Result\n\n" .
+        "- Output ONLY the CSV data lines (no headers, no explanations)\n\n" .
         "FORMAT REQUIREMENTS:\n" .
-        "- Date: YYYY-MM-DD format (e.g., 2023-08-27, NOT Aug 27,2023)\n" .
-        "- Sport: Single word (Baseball, Football, Basketball, Tennis, etc.)\n" .
+        "- Date: YYYY-MM-DD format (e.g., 2023-08-27)\n" .
+        "- Sport: Single word (Baseball, Football, Basketball, etc.)\n" .
         "- Selection: Brief description (e.g., 'Patriots ML', 'Over 8.5')\n" .
-        "- Stake: Decimal number (e.g., 50.00, 100.50)\n" .
-        "- Odds: American odds as decimal (e.g., -110, +120, 1.85)\n" .
+        "- Stake: From \"Total Pick\" field (e.g., 1000.00, 1150.00)\n" .
+        "- Odds: Calculate from profit ratio (e.g., -140, +255)\n" .
         "- Result: EXACTLY one of: WIN, LOSS, PUSH, REFUNDED\n" .
-        "- For PUSH/REFUNDED: Use -110 as odds (never use 0)\n\n" .
-        "EXAMPLE OUTPUT:\n" .
-        "2023-08-27,Baseball,Marlins Over 8.5,50.00,-112,WIN\n" .
-        "2023-08-26,Baseball,Yankees ML,100.00,-120,LOSS\n\n" .
-        "Convert this betting data batch to CSV format:";
+        "- Profit: EXACT value from \"Profit\" field (e.g., 714.29, -1000.00)\n\n" .
+        "PROFIT EXTRACTION EXAMPLES:\n" .
+        "\"Total Pick: 1000.00, Profit: 714.29\" → CSV: ...,1000.00,-140,WIN,714.29\n" .
+        "\"Total Pick: 1200.00, Profit: -1200.00\" → CSV: ...,1200.00,-110,LOSS,-1200.00\n\n" .
+        "VALIDATION: Ensure calculated odds roughly match profit ratios\n\n" .
+        "Convert this PlayerProfit data to enhanced CSV format:";
         
         foreach ($chunks as $chunkIndex => $chunk) {
             $currentBatchPrompt = str_replace("part X", "part " . ($chunkIndex + 1) . " of " . count($chunks), $batchSystemPrompt);
@@ -1644,8 +1650,11 @@ OUTPUT (CSV only, no explanations):";
                         }
                     }
                     
-                    // Validate CSV format with more flexible regex
-                    if (preg_match('/^\d{4}-\d{2}-\d{2},[^,]*,[^,]*,[\d.]+,[-+]?[\d.]+,(WIN|LOSS|PUSH|REFUNDED)$/i', $fixedLine)) {
+                    // Validate CSV format - support both 6-field and 7-field format
+                    $isValid6Field = preg_match('/^\d{4}-\d{2}-\d{2},[^,]*,[^,]*,[\d.]+,[-+]?[\d.]+,(WIN|LOSS|PUSH|REFUNDED)$/i', $fixedLine);
+                    $isValid7Field = preg_match('/^\d{4}-\d{2}-\d{2},[^,]*,[^,]*,[\d.]+,[-+]?[\d.]+,(WIN|LOSS|PUSH|REFUNDED),[-+]?[\d.]+$/i', $fixedLine);
+                    
+                    if ($isValid6Field || $isValid7Field) {
                         $allCsvLines[] = $fixedLine;
                         $csvLinesInChunk++;
                         if ($lineIndex < 3) {
