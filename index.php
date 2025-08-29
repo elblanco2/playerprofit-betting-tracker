@@ -235,8 +235,42 @@ class PlayerProfitTracker {
         return $this->apiKeyManager->storeApiKey($provider, $apiKey);
     }
     
+    public function getApiKey($provider) {
+        return $this->apiKeyManager->getApiKey($provider);
+    }
+    
     public function clearApiKey($provider) {
         return $this->apiKeyManager->clearApiKey($provider);
+    }
+    
+    public function testApiConnection($provider, $apiKey) {
+        try {
+            // Test with a simple prompt
+            $testPrompt = "Hello, please respond with just 'OK' to confirm the connection is working.";
+            
+            $result = $this->callLLMAPI($testPrompt, $apiKey, $provider);
+            
+            if ($result['success']) {
+                return [
+                    'success' => true,
+                    'message' => "API connection successful for $provider",
+                    'provider' => $provider
+                ];
+            } else {
+                return [
+                    'success' => false,
+                    'error' => $result['error'] ?? 'API test failed',
+                    'provider' => $provider
+                ];
+            }
+            
+        } catch (Exception $e) {
+            return [
+                'success' => false,
+                'error' => 'Connection test failed: ' . $e->getMessage(),
+                'provider' => $provider
+            ];
+        }
     }
     
     public function getApiKey($provider) {
@@ -2227,14 +2261,23 @@ if ($_POST) {
         $apiKey = isset($_POST['api_key']) ? trim($_POST['api_key']) : null;
         $provider = isset($_POST['provider']) ? $_POST['provider'] : null;
         
-        // If not provided, try to get from stored session keys (Google priority)
+        // If not provided, try to get from stored session keys with user preference
         if (empty($apiKey)) {
-            $providers = ['google', 'anthropic', 'openai'];
-            foreach ($providers as $p) {
-                if ($tracker->hasValidApiKey($p)) {
-                    $apiKey = $tracker->getApiKey($p);
-                    $provider = $p;
-                    break;
+            // Check for user's preferred provider first
+            $preferredProvider = $_POST['preferred_provider'] ?? null;
+            
+            if ($preferredProvider && $tracker->hasValidApiKey($preferredProvider)) {
+                $apiKey = $tracker->getApiKey($preferredProvider);
+                $provider = $preferredProvider;
+            } else {
+                // Fallback to priority order: Google > Anthropic > OpenAI
+                $providers = ['google', 'anthropic', 'openai'];
+                foreach ($providers as $p) {
+                    if ($tracker->hasValidApiKey($p)) {
+                        $apiKey = $tracker->getApiKey($p);
+                        $provider = $p;
+                        break;
+                    }
                 }
             }
         }
@@ -2404,6 +2447,61 @@ if ($_POST) {
         }
         
         header("Location: " . $_SERVER['PHP_SELF'] . "?key_stored=1");
+        exit;
+    }
+    
+    // Handle Delete API Key
+    if (isset($_POST['action']) && $_POST['action'] === 'delete_api_key') {
+        header('Content-Type: application/json');
+        
+        $provider = $_POST['provider'] ?? '';
+        if (empty($provider)) {
+            echo json_encode(['success' => false, 'error' => 'Provider not specified']);
+            exit;
+        }
+        
+        $tracker->clearApiKey($provider);
+        echo json_encode(['success' => true, 'message' => "API key for $provider deleted successfully"]);
+        exit;
+    }
+    
+    // Handle Test API Key
+    if (isset($_POST['action']) && $_POST['action'] === 'test_api_key') {
+        header('Content-Type: application/json');
+        
+        $provider = $_POST['provider'] ?? '';
+        if (empty($provider)) {
+            echo json_encode(['success' => false, 'error' => 'Provider not specified']);
+            exit;
+        }
+        
+        $apiKey = $tracker->getApiKey($provider);
+        if (empty($apiKey)) {
+            echo json_encode(['success' => false, 'error' => 'No API key found for this provider']);
+            exit;
+        }
+        
+        // Test the API key with a simple request
+        $testResult = $tracker->testApiConnection($provider, $apiKey);
+        echo json_encode($testResult);
+        exit;
+    }
+    
+    // Handle Test New API Key
+    if (isset($_POST['action']) && $_POST['action'] === 'test_new_api_key') {
+        header('Content-Type: application/json');
+        
+        $provider = $_POST['provider'] ?? '';
+        $apiKey = trim($_POST['api_key'] ?? '');
+        
+        if (empty($provider) || empty($apiKey)) {
+            echo json_encode(['success' => false, 'error' => 'Provider and API key required']);
+            exit;
+        }
+        
+        // Test the new API key without storing it
+        $testResult = $tracker->testApiConnection($provider, $apiKey);
+        echo json_encode($testResult);
         exit;
     }
     
@@ -3714,6 +3812,205 @@ $needsSetup = false; // Multi-account system handles setup automatically
                 width: 100%;
                 max-width: 300px;
             }
+        }
+        
+        /* Enhanced API Key Management Styles */
+        .api-management-panel {
+            position: fixed;
+            top: 50px;
+            right: 20px;
+            width: 400px;
+            max-height: 80vh;
+            background: linear-gradient(135deg, #1a1a2e, #16213e);
+            border-radius: 15px;
+            border: 1px solid rgba(255,255,255,0.2);
+            box-shadow: 0 8px 32px rgba(0,0,0,0.4);
+            overflow: hidden;
+            z-index: 10000;
+        }
+        
+        .api-panel-header {
+            background: rgba(255,255,255,0.1);
+            padding: 15px 20px;
+            border-bottom: 1px solid rgba(255,255,255,0.1);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        
+        .api-panel-header h3 {
+            margin: 0;
+            font-size: 16px;
+            color: #FFD700;
+        }
+        
+        .close-btn {
+            background: none;
+            border: none;
+            color: #ccc;
+            font-size: 20px;
+            cursor: pointer;
+            padding: 0;
+            width: 25px;
+            height: 25px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        
+        .close-btn:hover {
+            color: #f44336;
+        }
+        
+        .stored-keys-section, .add-key-section, .provider-selection-section, .api-stats-section {
+            padding: 15px 20px;
+            border-bottom: 1px solid rgba(255,255,255,0.1);
+        }
+        
+        .stored-keys-section h4, .add-key-section h4, .provider-selection-section h4, .api-stats-section h4 {
+            margin: 0 0 15px 0;
+            font-size: 14px;
+            color: #4CAF50;
+        }
+        
+        .key-item {
+            background: rgba(255,255,255,0.05);
+            border: 1px solid rgba(255,255,255,0.1);
+            border-radius: 8px;
+            padding: 12px;
+            margin-bottom: 10px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        
+        .key-info {
+            display: flex;
+            flex-direction: column;
+            flex: 1;
+        }
+        
+        .provider-name {
+            font-weight: bold;
+            color: #FFD700;
+            font-size: 13px;
+        }
+        
+        .masked-key {
+            font-family: monospace;
+            color: #ccc;
+            font-size: 11px;
+            margin: 2px 0;
+        }
+        
+        .expiry-info {
+            font-size: 10px;
+            color: #888;
+        }
+        
+        .key-actions {
+            display: flex;
+            gap: 5px;
+        }
+        
+        .btn-edit, .btn-delete, .btn-test {
+            background: rgba(255,255,255,0.1);
+            border: 1px solid rgba(255,255,255,0.2);
+            color: white;
+            padding: 4px 8px;
+            border-radius: 4px;
+            font-size: 10px;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+        
+        .btn-edit:hover { background: rgba(76,175,80,0.3); }
+        .btn-delete:hover { background: rgba(244,67,54,0.3); }
+        .btn-test:hover { background: rgba(33,150,243,0.3); }
+        
+        .form-group {
+            margin-bottom: 12px;
+        }
+        
+        .form-group label {
+            display: block;
+            font-size: 12px;
+            color: #ccc;
+            margin-bottom: 5px;
+        }
+        
+        .form-group select, .form-group input {
+            width: 100%;
+            padding: 8px;
+            border-radius: 6px;
+            background: rgba(0,0,0,0.4);
+            border: 1px solid rgba(255,255,255,0.2);
+            color: white;
+            font-size: 12px;
+        }
+        
+        .api-key-help {
+            font-size: 10px;
+            color: #888;
+            margin-top: 4px;
+        }
+        
+        .form-actions {
+            display: flex;
+            gap: 8px;
+            margin-top: 15px;
+        }
+        
+        .btn-primary, .btn-secondary {
+            flex: 1;
+            padding: 8px 12px;
+            border-radius: 6px;
+            border: none;
+            font-size: 11px;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+        
+        .btn-primary {
+            background: #4CAF50;
+            color: white;
+        }
+        
+        .btn-primary:hover {
+            background: #45a049;
+        }
+        
+        .btn-secondary {
+            background: rgba(255,255,255,0.1);
+            color: white;
+            border: 1px solid rgba(255,255,255,0.2);
+        }
+        
+        .btn-secondary:hover {
+            background: rgba(255,255,255,0.2);
+        }
+        
+        .stat-item {
+            display: flex;
+            justify-content: space-between;
+            margin-bottom: 8px;
+            font-size: 11px;
+        }
+        
+        .stat-label {
+            color: #ccc;
+        }
+        
+        .stat-value {
+            color: #4CAF50;
+            font-weight: bold;
+        }
+        
+        .no-keys-message {
+            text-align: center;
+            color: #888;
+            padding: 20px;
+            font-style: italic;
         }
         
     </style>
@@ -6117,12 +6414,12 @@ $needsSetup = false; // Multi-account system handles setup automatically
                         <span class="api-key-indicator inactive" title="Google Gemini API Key Not Configured">🌟</span>
                         <?php endif; ?>
                     </div>
-                    <button type="button" onclick="showApiConfig()" style="background: none; border: none; color: #4CAF50; text-decoration: underline; cursor: pointer; font-size: 11px;">settings</button>
+                    <button type="button" onclick="showApiManagement()" style="background: none; border: none; color: #4CAF50; text-decoration: underline; cursor: pointer; font-size: 11px;">🔑 manage keys</button>
                 </div>
                 <?php else: ?>
                 <div style="color: #FFC107; font-size: 12px; padding: 8px; display: flex; justify-content: space-between; align-items: center;">
                     <span>⚠️ API key required</span>
-                    <button type="button" onclick="showApiConfig()" style="background: none; border: none; color: #FFC107; text-decoration: underline; cursor: pointer; font-size: 11px;">configure</button>
+                    <button type="button" onclick="showApiManagement()" style="background: none; border: none; color: #FFC107; text-decoration: underline; cursor: pointer; font-size: 11px;">🔑 add key</button>
                 </div>
                 <?php endif; ?>
             </div>
@@ -6166,6 +6463,112 @@ $needsSetup = false; // Multi-account system handles setup automatically
                     </form>
                 </div>
                 <?php endif; ?>
+            </div>
+            
+            <!-- Enhanced API Key Management Panel -->
+            <div id="api-management-panel" class="api-management-panel" style="display: none;">
+                <div class="api-panel-header">
+                    <h3>🔑 API Key Management</h3>
+                    <button onclick="hideApiManagement()" class="close-btn">×</button>
+                </div>
+                
+                <!-- Stored Keys Display -->
+                <div class="stored-keys-section">
+                    <h4>📋 Stored API Keys</h4>
+                    <div id="stored-keys-list">
+                        <?php
+                        $apiKeyManager = new ApiKeyManager();
+                        $sessionInfo = $apiKeyManager->getSessionInfo();
+                        
+                        if (empty($sessionInfo)): ?>
+                            <div class="no-keys-message">
+                                <p>No API keys stored. Add a key below to start using AI features.</p>
+                            </div>
+                        <?php else: ?>
+                            <?php foreach ($sessionInfo as $provider => $info): ?>
+                                <div class="key-item" data-provider="<?= $provider ?>">
+                                    <div class="key-info">
+                                        <span class="provider-name"><?= ucfirst($provider) ?></span>
+                                        <span class="masked-key"><?= $info['masked'] ?></span>
+                                        <span class="expiry-info"><?= $info['expires_in'] ?></span>
+                                    </div>
+                                    <div class="key-actions">
+                                        <button onclick="editApiKey('<?= $provider ?>')" class="btn-edit">✏️ Edit</button>
+                                        <button onclick="deleteApiKey('<?= $provider ?>')" class="btn-delete">🗑️ Delete</button>
+                                        <button onclick="testApiKey('<?= $provider ?>')" class="btn-test">🔍 Test</button>
+                                    </div>
+                                </div>
+                            <?php endforeach; ?>
+                        <?php endif; ?>
+                    </div>
+                </div>
+                
+                <!-- Add New Key Form -->
+                <div class="add-key-section">
+                    <h4>➕ Add New API Key</h4>
+                    <form id="add-api-key-form" method="POST" action="">
+                        <input type="hidden" name="action" value="store_api_key">
+                        <input type="hidden" name="account_id" value="<?= htmlspecialchars($currentAccountId ?? '') ?>">
+                        
+                        <div class="form-group">
+                            <label>AI Provider:</label>
+                            <select name="provider" id="new-provider" onchange="updateApiKeyPlaceholder()">
+                                <option value="google">Google (Gemini) - Free Tier Available</option>
+                                <option value="anthropic">Anthropic (Claude) - Most Accurate</option>
+                                <option value="openai">OpenAI (GPT-4) - Premium</option>
+                                <option value="ollama">Ollama (Local) - Free Local</option>
+                            </select>
+                        </div>
+                        
+                        <div class="form-group">
+                            <label>API Key:</label>
+                            <input type="password" name="api_key" id="new-api-key" placeholder="Enter API key..." required>
+                            <div class="api-key-help">
+                                <span id="api-key-format-help">Format: AIza... (Google) or sk-... (OpenAI) or sk-ant-... (Anthropic)</span>
+                            </div>
+                        </div>
+                        
+                        <div class="form-actions">
+                            <button type="submit" class="btn-primary">💾 Store API Key</button>
+                            <button type="button" onclick="testNewApiKey()" class="btn-secondary">🔍 Test Key</button>
+                        </div>
+                    </form>
+                </div>
+                
+                <!-- Provider Selection for Chat -->
+                <div class="provider-selection-section">
+                    <h4>🤖 Active AI Provider</h4>
+                    <form id="provider-selection-form">
+                        <div class="form-group">
+                            <label>Select Provider for Chat:</label>
+                            <select id="active-provider" onchange="updateActiveProvider()">
+                                <option value="">Auto-Select (First Available)</option>
+                                <?php foreach ($sessionInfo as $provider => $info): ?>
+                                    <option value="<?= $provider ?>"><?= ucfirst($provider) ?> (<?= $info['masked'] ?>)</option>
+                                <?php endforeach; ?>
+                            </select>
+                        </div>
+                    </form>
+                </div>
+                
+                <!-- API Usage Stats -->
+                <div class="api-stats-section">
+                    <h4>📊 API Usage (Current Session)</h4>
+                    <div id="api-usage-stats">
+                        <div class="stat-item">
+                            <span class="stat-label">Requests Made:</span>
+                            <span class="stat-value" id="total-requests">0</span>
+                        </div>
+                        <div class="stat-item">
+                            <span class="stat-label">Successful:</span>
+                            <span class="stat-value" id="successful-requests">0</span>
+                        </div>
+                        <div class="stat-item">
+                            <span class="stat-label">Failed:</span>
+                            <span class="stat-value" id="failed-requests">0</span>
+                        </div>
+                    </div>
+                </div>
             </div>
             
             <!-- Chat Messages Area -->
@@ -6273,6 +6676,159 @@ $needsSetup = false; // Multi-account system handles setup automatically
             document.getElementById('chat-api-config').style.display = 'none';
         }
         
+        // Enhanced API Key Management Functions
+        function showApiManagement() {
+            document.getElementById('api-management-panel').style.display = 'block';
+            hideApiConfig(); // Hide the old config panel
+        }
+        
+        function hideApiManagement() {
+            document.getElementById('api-management-panel').style.display = 'none';
+        }
+        
+        function updateApiKeyPlaceholder() {
+            const provider = document.getElementById('new-provider').value;
+            const input = document.getElementById('new-api-key');
+            const help = document.getElementById('api-key-format-help');
+            
+            const placeholders = {
+                'google': { placeholder: 'AIza...', help: 'Format: AIzaSy... (Google API Console)' },
+                'openai': { placeholder: 'sk-...', help: 'Format: sk-proj-... (OpenAI Dashboard)' },
+                'anthropic': { placeholder: 'sk-ant-...', help: 'Format: sk-ant-api... (Anthropic Console)' },
+                'ollama': { placeholder: 'local', help: 'Local Ollama server (leave blank for default)' }
+            };
+            
+            input.placeholder = placeholders[provider]?.placeholder || 'Enter API key...';
+            help.textContent = placeholders[provider]?.help || 'Enter your API key';
+        }
+        
+        async function editApiKey(provider) {
+            const newKey = prompt(`Edit ${provider.toUpperCase()} API Key:`, '');
+            if (newKey === null || newKey.trim() === '') return;
+            
+            await updateApiKey(provider, newKey.trim());
+        }
+        
+        async function deleteApiKey(provider) {
+            if (!confirm(`Delete ${provider.toUpperCase()} API key?`)) return;
+            
+            try {
+                const response = await fetch(window.location.href, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+                    body: `action=delete_api_key&provider=${provider}&account_id=<?= $currentAccountId ?>`
+                });
+                
+                const result = await response.json();
+                if (result.success) {
+                    location.reload(); // Refresh to update the interface
+                } else {
+                    alert('Error deleting API key: ' + result.error);
+                }
+            } catch (error) {
+                alert('Network error: ' + error.message);
+            }
+        }
+        
+        async function testApiKey(provider) {
+            const statusElement = document.querySelector(`[data-provider="${provider}"] .test-status`);
+            if (!statusElement) {
+                // Add temporary status indicator
+                const keyItem = document.querySelector(`[data-provider="${provider}"]`);
+                const testBtn = keyItem.querySelector('.btn-test');
+                testBtn.textContent = '⏳ Testing...';
+                testBtn.disabled = true;
+            }
+            
+            try {
+                const response = await fetch(window.location.href, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+                    body: `action=test_api_key&provider=${provider}&account_id=<?= $currentAccountId ?>`
+                });
+                
+                const result = await response.json();
+                const testBtn = document.querySelector(`[data-provider="${provider}"] .btn-test`);
+                
+                if (result.success) {
+                    testBtn.textContent = '✅ Working';
+                    testBtn.style.background = 'rgba(76,175,80,0.3)';
+                    setTimeout(() => {
+                        testBtn.textContent = '🔍 Test';
+                        testBtn.style.background = 'rgba(255,255,255,0.1)';
+                    }, 2000);
+                } else {
+                    testBtn.textContent = '❌ Failed';
+                    testBtn.style.background = 'rgba(244,67,54,0.3)';
+                    alert('API test failed: ' + result.error);
+                    setTimeout(() => {
+                        testBtn.textContent = '🔍 Test';
+                        testBtn.style.background = 'rgba(255,255,255,0.1)';
+                    }, 2000);
+                }
+            } catch (error) {
+                alert('Test error: ' + error.message);
+            } finally {
+                const testBtn = document.querySelector(`[data-provider="${provider}"] .btn-test`);
+                testBtn.disabled = false;
+            }
+        }
+        
+        async function testNewApiKey() {
+            const provider = document.getElementById('new-provider').value;
+            const apiKey = document.getElementById('new-api-key').value.trim();
+            
+            if (!apiKey) {
+                alert('Please enter an API key to test');
+                return;
+            }
+            
+            const testBtn = document.querySelector('.btn-secondary');
+            const originalText = testBtn.textContent;
+            testBtn.textContent = '⏳ Testing...';
+            testBtn.disabled = true;
+            
+            try {
+                const response = await fetch(window.location.href, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+                    body: `action=test_new_api_key&provider=${provider}&api_key=${encodeURIComponent(apiKey)}&account_id=<?= $currentAccountId ?>`
+                });
+                
+                const result = await response.json();
+                
+                if (result.success) {
+                    testBtn.textContent = '✅ Valid';
+                    testBtn.style.background = 'rgba(76,175,80,0.3)';
+                    setTimeout(() => {
+                        testBtn.textContent = originalText;
+                        testBtn.style.background = 'rgba(255,255,255,0.1)';
+                    }, 2000);
+                } else {
+                    alert('API key test failed: ' + result.error);
+                    testBtn.textContent = '❌ Invalid';
+                    testBtn.style.background = 'rgba(244,67,54,0.3)';
+                    setTimeout(() => {
+                        testBtn.textContent = originalText;
+                        testBtn.style.background = 'rgba(255,255,255,0.1)';
+                    }, 2000);
+                }
+            } catch (error) {
+                alert('Test error: ' + error.message);
+            } finally {
+                testBtn.disabled = false;
+            }
+        }
+        
+        function updateActiveProvider() {
+            const provider = document.getElementById('active-provider').value;
+            localStorage.setItem('preferred-ai-provider', provider);
+            
+            // Update UI to show selected provider
+            const statusText = provider ? `Using ${provider.toUpperCase()}` : 'Auto-Select';
+            // Could add visual feedback here
+        }
+        
         async function sendFloatingChatMessage(event) {
             event.preventDefault();
             const input = document.getElementById('float-chat-input');
@@ -6291,10 +6847,14 @@ $needsSetup = false; // Multi-account system handles setup automatically
             
             try {
                 // Get API key from stored session (since we already checked hasAnyKey in PHP)
+                // Get user's preferred provider from localStorage
+                const preferredProvider = localStorage.getItem('preferred-ai-provider') || '';
+                
                 const formData = new URLSearchParams({
                     action: 'chat_with_llm_ajax',
                     user_message: message,
-                    account_id: '<?= htmlspecialchars($currentAccountId ?? '') ?>'
+                    account_id: '<?= htmlspecialchars($currentAccountId ?? '') ?>',
+                    preferred_provider: preferredProvider
                 });
                 
                 console.log('Sending request:', formData.toString()); // Debug log
