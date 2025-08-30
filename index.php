@@ -3083,6 +3083,39 @@ $needsSetup = false; // Multi-account system handles setup automatically
             box-shadow: 0 4px 30px rgba(0,0,0,0.4);
         }
         
+        /* Sticky Account Status Cards */
+        .sticky-account-status {
+            position: sticky;
+            top: 120px; /* Below the main sticky header */
+            z-index: 900;
+            background: linear-gradient(135deg, rgba(26, 26, 46, 0.98), rgba(22, 33, 62, 0.98));
+            backdrop-filter: blur(15px);
+            padding: 20px;
+            margin: -20px -20px 20px -20px;
+            border-bottom: 1px solid rgba(255, 215, 0, 0.15);
+            box-shadow: 0 2px 20px rgba(0,0,0,0.3);
+        }
+        
+        /* Sticky Navigation Bar */
+        .sticky-nav-bar {
+            position: sticky;
+            top: 280px; /* Below account status cards */
+            z-index: 800;
+            background: linear-gradient(135deg, rgba(26, 26, 46, 0.95), rgba(22, 33, 62, 0.95));
+            backdrop-filter: blur(15px);
+            padding: 15px 20px;
+            margin: -20px -20px 30px -20px;
+            border-bottom: 1px solid rgba(255, 215, 0, 0.15);
+            box-shadow: 0 2px 15px rgba(0,0,0,0.3);
+        }
+        
+        /* Phase Info Bar Styling */
+        .phase-info-bar {
+            text-align: center;
+            margin-bottom: 15px;
+            padding: 10px 0;
+        }
+        
         .sticky-header h1 {
             margin: 0 0 20px 0;
             text-align: center;
@@ -3224,6 +3257,23 @@ $needsSetup = false; // Multi-account system handles setup automatically
             .sticky-header h1 {
                 font-size: 1.8em;
                 margin-bottom: 15px;
+            }
+            
+            .sticky-account-status {
+                top: 100px; /* Adjusted for mobile */
+                margin: -10px -10px 15px -10px;
+                padding: 15px;
+            }
+            
+            .sticky-nav-bar {
+                top: 240px; /* Adjusted for mobile */
+                margin: -10px -10px 20px -10px;
+                padding: 10px 15px;
+            }
+            
+            .phase-info-bar {
+                margin-bottom: 10px;
+                font-size: 0.9em;
             }
             
             .account-tabs {
@@ -4707,8 +4757,9 @@ $needsSetup = false; // Multi-account system handles setup automatically
             </div>
         <?php else: ?>
             
-            <!-- Modern Dashboard Metrics -->
-            <div class="metrics-grid">
+            <!-- Sticky Account Status Cards -->
+            <div class="sticky-account-status">
+                <div class="metrics-grid">
                 <!-- Enhanced Balance Card -->
                 <div class="metric-card">
                     <div class="metric-icon">💰</div>
@@ -4791,18 +4842,32 @@ $needsSetup = false; // Multi-account system handles setup automatically
                     </div>
                 </div>
             </div>
+            </div>
             
             <!-- Charts removed for cleaner interface - moved to Analytics tab -->
             
-            <!-- Phase and Account Info -->
-            <div style="text-align: center; margin-bottom: 30px;">
-                <span class="phase-badge <?= strtolower(str_replace(' ', '-', $accountStatus['current_phase'])) ?>">
-                    <?= $accountStatus['current_phase'] ?>
-                </span>
-                <span style="margin: 0 20px;">|</span>
-                <span style="color: #FFD700; font-weight: bold;">
-                    <?= $accountStatus['account_tier'] ?> $<?= number_format($accountStatus['account_size']) ?>
-                </span>
+            <!-- Sticky Navigation Bar -->
+            <div class="sticky-nav-bar">
+                <!-- Phase and Account Info -->
+                <div class="phase-info-bar">
+                    <span class="phase-badge <?= strtolower(str_replace(' ', '-', $accountStatus['current_phase'])) ?>">
+                        <?= $accountStatus['current_phase'] ?>
+                    </span>
+                    <span style="margin: 0 20px;">|</span>
+                    <span style="color: #FFD700; font-weight: bold;">
+                        <?= $accountStatus['account_tier'] ?> $<?= number_format($accountStatus['account_size']) ?>
+                    </span>
+                </div>
+                
+                <!-- Navigation Tabs -->
+                <div class="nav-tabs">
+                    <button class="nav-tab" onclick="showTab('add-bet')">📝 Add Bet</button>
+                    <button class="nav-tab" onclick="showTab('import-bets')">📥 Import Bets</button>
+                    <button class="nav-tab" onclick="showTab('parlay-calc')">🎲 Parlay Calculator</button>
+                    <button class="nav-tab active" onclick="showTab('all-bets')">📋 All Bets</button>
+                    <button class="nav-tab" onclick="showTab('analytics')">📊 Analytics</button>
+                    <button class="nav-tab" onclick="showTab('discord')">💬 Discord</button>
+                </div>
             </div>
             
             <!-- Violations Display -->
@@ -4827,16 +4892,6 @@ $needsSetup = false; // Multi-account system handles setup automatically
                     </form>
                 </div>
             <?php endif; ?>
-            
-            <!-- Navigation Tabs -->
-            <div class="nav-tabs">
-                <button class="nav-tab" onclick="showTab('add-bet')">📝 Add Bet</button>
-                <button class="nav-tab" onclick="showTab('import-bets')">📥 Import Bets</button>
-                <button class="nav-tab" onclick="showTab('parlay-calc')">🎲 Parlay Calculator</button>
-                <button class="nav-tab active" onclick="showTab('all-bets')">📋 All Bets</button>
-                <button class="nav-tab" onclick="showTab('analytics')">📊 Analytics</button>
-                <button class="nav-tab" onclick="showTab('discord')">💬 Discord</button>
-            </div>
             
             <!-- Add Bet Tab -->
             <div id="add-bet" class="tab-content">
