@@ -2743,6 +2743,9 @@ $needsSetup = false; // Multi-account system handles setup automatically
             padding: 30px;
             box-shadow: 0 8px 32px rgba(0,0,0,0.3);
             border: 1px solid rgba(255,255,255,0.1);
+            /* Ensure stable container for sticky elements */
+            position: relative;
+            overflow: visible;
         }
         
         h1 {
@@ -2865,6 +2868,9 @@ $needsSetup = false; // Multi-account system handles setup automatically
             border-radius: 10px;
             margin-bottom: 30px;
             border: 1px solid rgba(255,255,255,0.1);
+            /* Optimize for sticky performance with large content */
+            contain: layout style;
+            overflow-anchor: none;
         }
         
         .tab-content.active {
@@ -2965,6 +2971,17 @@ $needsSetup = false; // Multi-account system handles setup automatically
             border-radius: 10px;
             overflow: hidden;
             margin-bottom: 20px;
+            /* Optimize for sticky performance */
+            contain: layout;
+            transform: translateZ(0);
+        }
+        
+        /* All Bets Tab Optimization */
+        #all-bets {
+            /* Prevent layout thrashing with large tables */
+            contain: layout style;
+            height: auto;
+            overflow: visible;
         }
         
         .bets-table th {
@@ -3094,6 +3111,10 @@ $needsSetup = false; // Multi-account system handles setup automatically
             margin: -20px -20px 30px -20px;
             border-bottom: 1px solid rgba(255, 215, 0, 0.15);
             box-shadow: 0 2px 15px rgba(0,0,0,0.3);
+            /* Optimize for large content */
+            contain: layout style;
+            will-change: transform;
+            transform: translateZ(0);
         }
         
         /* Phase Info Bar Styling */
