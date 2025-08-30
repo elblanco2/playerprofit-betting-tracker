@@ -1103,7 +1103,7 @@ class PlayerProfitTracker {
                 return ['success' => false, 'error' => 'Invalid result'];
             }
             
-            // Update the bet
+            // Update the bet while preserving important fields
             $data['bets'][$betIndex] = [
                 'id' => $betId,
                 'date' => $date,
@@ -1112,7 +1112,9 @@ class PlayerProfitTracker {
                 'stake' => $stake,
                 'odds' => $odds,
                 'result' => $result,
-                'pnl' => $this->calculatePnL($stake, $odds, $result),
+                'pnl' => $this->calculatePayout($stake, $odds, $result),
+                'is_parlay' => $oldBet['is_parlay'] ?? false, // Preserve parlay status
+                'parlay_legs' => $oldBet['parlay_legs'] ?? [], // Preserve parlay legs
                 'timestamp' => $oldBet['timestamp'] // Keep original timestamp
             ];
             
@@ -4194,13 +4196,23 @@ $needsSetup = false; // Multi-account system handles setup automatically
                             method: 'POST',
                             body: formData
                         })
-                        .then(response => response.text())
-                        .then(() => {
-                            closeBetModal();
-                            location.reload(); // Refresh to show updated bet
+                        .then(response => {
+                            if (!response.ok) {
+                                throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+                            }
+                            return response.text();
+                        })
+                        .then(responseText => {
+                            // Check if response contains error message
+                            if (responseText.includes('❌')) {
+                                alert('Edit failed: ' + responseText.match(/❌[^<]*/)?.[0] || 'Unknown error');
+                            } else {
+                                closeBetModal();
+                                location.reload(); // Refresh to show updated bet
+                            }
                         })
                         .catch(error => {
-                            alert('Error updating bet: ' + error);
+                            alert('Error updating bet: ' + error.message);
                         });
                     };
                 })
@@ -4219,12 +4231,22 @@ $needsSetup = false; // Multi-account system handles setup automatically
                     method: 'POST',
                     body: formData
                 })
-                .then(response => response.text())
-                .then(() => {
-                    location.reload(); // Refresh to show updated bet list
+                .then(response => {
+                    if (!response.ok) {
+                        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+                    }
+                    return response.text();
+                })
+                .then(responseText => {
+                    // Check if response contains error message
+                    if (responseText.includes('❌')) {
+                        alert('Delete failed: ' + responseText.match(/❌[^<]*/)?.[0] || 'Unknown error');
+                    } else {
+                        location.reload(); // Refresh to show updated bet list
+                    }
                 })
                 .catch(error => {
-                    alert('Error deleting bet: ' + error);
+                    alert('Error deleting bet: ' + error.message);
                 });
             }
         }
