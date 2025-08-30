@@ -2990,6 +2990,11 @@ $needsSetup = false; // Multi-account system handles setup automatically
             padding: 15px 10px;
             text-align: left;
             font-weight: bold;
+            /* Make table header sticky */
+            position: sticky;
+            top: 180px; /* Below the main navigation bar */
+            z-index: 700;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.3);
         }
         
         .bets-table td {
@@ -3275,6 +3280,12 @@ $needsSetup = false; // Multi-account system handles setup automatically
             
             .phase-info-bar {
                 margin-bottom: 10px;
+                font-size: 0.9em;
+            }
+            
+            .bets-table th {
+                top: 160px; /* Adjusted for mobile navigation */
+                padding: 10px 8px;
                 font-size: 0.9em;
             }
             
