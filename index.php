@@ -3083,24 +3083,11 @@ $needsSetup = false; // Multi-account system handles setup automatically
             box-shadow: 0 4px 30px rgba(0,0,0,0.4);
         }
         
-        /* Sticky Account Status Cards */
-        .sticky-account-status {
-            position: sticky;
-            top: 120px; /* Below the main sticky header */
-            z-index: 900;
-            background: linear-gradient(135deg, rgba(26, 26, 46, 0.98), rgba(22, 33, 62, 0.98));
-            backdrop-filter: blur(15px);
-            padding: 20px;
-            margin: -20px -20px 20px -20px;
-            border-bottom: 1px solid rgba(255, 215, 0, 0.15);
-            box-shadow: 0 2px 20px rgba(0,0,0,0.3);
-        }
-        
         /* Sticky Navigation Bar */
         .sticky-nav-bar {
             position: sticky;
-            top: 280px; /* Below account status cards */
-            z-index: 800;
+            top: 120px; /* Below the main sticky header */
+            z-index: 900;
             background: linear-gradient(135deg, rgba(26, 26, 46, 0.95), rgba(22, 33, 62, 0.95));
             backdrop-filter: blur(15px);
             padding: 15px 20px;
@@ -3259,14 +3246,8 @@ $needsSetup = false; // Multi-account system handles setup automatically
                 margin-bottom: 15px;
             }
             
-            .sticky-account-status {
-                top: 100px; /* Adjusted for mobile */
-                margin: -10px -10px 15px -10px;
-                padding: 15px;
-            }
-            
             .sticky-nav-bar {
-                top: 240px; /* Adjusted for mobile */
+                top: 100px; /* Adjusted for mobile */
                 margin: -10px -10px 20px -10px;
                 padding: 10px 15px;
             }
@@ -4743,93 +4724,6 @@ $needsSetup = false; // Multi-account system handles setup automatically
                 </form>
             </div>
         <?php else: ?>
-            
-            <!-- Sticky Account Status Cards -->
-            <div class="sticky-account-status">
-                <div class="metrics-grid">
-                    <!-- Enhanced Balance Card -->
-                    <div class="metric-card">
-                        <div class="metric-icon">💰</div>
-                        <div class="metric-title">Current Balance</div>
-                        <div class="metric-value">$<?= number_format($accountStatus['current_balance'], 2) ?></div>
-                        <div class="metric-subtitle">Account Size: $<?= number_format($accountStatus['account_size']) ?></div>
-                    </div>
-                    
-                    <!-- Enhanced Profit Progress Card -->
-                    <div class="metric-card">
-                        <div class="metric-icon"><?= $accountStatus['current_phase'] !== 'Funded' ? '📈' : '🏆' ?></div>
-                        <div class="metric-title">
-                            <?php if ($accountStatus['current_phase'] !== 'Funded'): ?>
-                                Progress to Target
-                            <?php else: ?>
-                                Account Status
-                            <?php endif; ?>
-                        </div>
-                        <?php if ($accountStatus['current_phase'] !== 'Funded'): ?>
-                            <div id="profit-progress-ring" class="progress-ring-container" data-percent="<?= min(100, max(0, ($accountStatus['profit_percentage'] / 20) * 100)) ?>">
-                                <svg class="progress-ring" width="120" height="120">
-                                    <circle class="progress-ring-bg" cx="60" cy="60" r="52"></circle>
-                                    <circle class="progress-ring-circle" cx="60" cy="60" r="52" style="--ring-color: #FFD700"></circle>
-                                </svg>
-                                <div class="progress-ring-label">
-                                    <div class="progress-ring-value" style="color: #FFD700"><?= number_format($accountStatus['profit_percentage'], 1) ?>%</div>
-                                    <div class="progress-ring-subtitle">of 20%</div>
-                                </div>
-                            </div>
-                        <?php else: ?>
-                            <div class="metric-value">FUNDED</div>
-                            <div class="metric-subtitle">🎉 Congratulations!</div>
-                        <?php endif; ?>
-                    </div>
-                    
-                    <!-- Enhanced Risk/Picks Card -->
-                    <div class="metric-card">
-                        <div class="metric-icon">🎯</div>
-                        <div class="metric-title">Picks Progress</div>
-                        <div id="picks-progress-ring" class="progress-ring-container" data-percent="<?= min(100, ($accountStatus['total_picks'] / 20) * 100) ?>">
-                            <svg class="progress-ring" width="120" height="120">
-                                <circle class="progress-ring-bg" cx="60" cy="60" r="52"></circle>
-                                <circle class="progress-ring-circle" cx="60" cy="60" r="52" style="--ring-color: #FFC107"></circle>
-                            </svg>
-                            <div class="progress-ring-label">
-                                <div class="progress-ring-value" style="color: #FFC107"><?= $accountStatus['total_picks'] ?></div>
-                                <div class="progress-ring-subtitle">of 20</div>
-                            </div>
-                        </div>
-                    </div>
-                    
-                    <?php if (!empty($violations)): ?>
-                    <!-- Enhanced Violations Card -->
-                    <div class="metric-card">
-                        <div class="metric-icon">⚠️</div>
-                        <div class="metric-title">Active Violations</div>
-                        <div class="metric-value pulse" style="color: #f44336"><?= count($violations) ?></div>
-                        <div class="card-subtitle">Requires Attention</div>
-                    </div>
-                    <?php endif; ?>
-                    
-                    <!-- Risk Gauge -->
-                    <div class="status-card-enhanced" style="--card-accent-color: #2196F3">
-                        <div class="card-icon">⚡</div>
-                        <div class="card-title">Current Risk Level</div>
-                        <div id="risk-gauge-container" class="risk-gauge" data-value="<?= min(100, (($accountStatus['current_balance'] - $accountStatus['account_size']) / $accountStatus['account_size']) * 100 + 50) ?>">
-                            <svg class="gauge-svg" viewBox="0 0 200 120">
-                                <path class="gauge-bg" d="M 20 100 A 80 80 0 0 1 180 100" 
-                                      stroke-dasharray="251" stroke-dashoffset="0"></path>
-                                <path class="gauge-fill" d="M 20 100 A 80 80 0 0 1 180 100" 
-                                      stroke-dasharray="251" stroke-dashoffset="251"></path>
-                                <line class="gauge-needle" x1="100" y1="100" x2="100" y2="30" 
-                                      stroke="white" stroke-width="3" stroke-linecap="round"></line>
-                                <circle class="gauge-center" cx="100" cy="100" r="6"></circle>
-                            </svg>
-                            <div class="gauge-label">
-                                <div class="gauge-title">Risk Assessment</div>
-                                <div class="gauge-value">Safe</div>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-            </div>
             
             <!-- Sticky Navigation Bar -->
             <div class="sticky-nav-bar">
