@@ -4882,18 +4882,6 @@ $needsSetup = false; // Multi-account system handles setup automatically
             </div>
             </div>
             
-            <!-- Violations Display -->
-            <?php if (!empty($violations)): ?>
-                <div style="margin-bottom: 30px;">
-                    <?php foreach ($violations as $violation): ?>
-                        <div class="violation-alert <?= $violation['severity'] === 'warning' ? 'warning' : '' ?>">
-                            <div class="violation-icon"><?= $violation['severity'] === 'critical' ? '🚨' : '⚠️' ?></div>
-                            <div><?= $violation['message'] ?></div>
-                        </div>
-                    <?php endforeach; ?>
-                </div>
-            <?php endif; ?>
-            
             <!-- Phase Advancement Button -->
             <?php if ($accountStatus['current_phase'] !== 'Funded' && $accountStatus['target_met'] && $accountStatus['total_picks'] >= 20): ?>
                 <div style="text-align: center; margin-bottom: 30px;">
