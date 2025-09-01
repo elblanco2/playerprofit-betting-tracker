@@ -3086,34 +3086,46 @@ $needsSetup = false; // Multi-account system handles setup automatically
             color: white;
         }
         
-        /* Sticky Header Container */
+        /* Floating Sticky Header Container */
         .sticky-header {
             position: sticky;
-            top: 0;
+            top: 10px;
             z-index: 1000;
-            background: linear-gradient(135deg, rgba(26, 26, 46, 0.95), rgba(22, 33, 62, 0.95));
-            backdrop-filter: blur(15px);
-            padding: 20px;
-            margin: -20px -20px 30px -20px;
-            border-bottom: 2px solid rgba(255, 215, 0, 0.2);
-            box-shadow: 0 4px 30px rgba(0,0,0,0.4);
-        }
-        
-        /* Sticky Navigation Bar */
-        .sticky-nav-bar {
-            position: sticky;
-            top: 120px; /* Below the main sticky header */
-            z-index: 900;
-            background: linear-gradient(135deg, rgba(26, 26, 46, 0.95), rgba(22, 33, 62, 0.95));
+            background: rgba(255,255,255,0.1);
             backdrop-filter: blur(15px);
             padding: 15px 20px;
-            margin: -20px -20px 30px -20px;
-            border-bottom: 1px solid rgba(255, 215, 0, 0.15);
-            box-shadow: 0 2px 15px rgba(0,0,0,0.3);
-            /* Optimize for large content */
-            contain: layout style;
-            will-change: transform;
-            transform: translateZ(0);
+            margin: 10px 10px 30px 10px;
+            border-radius: 15px;
+            border: 1px solid rgba(255,255,255,0.2);
+            box-shadow: 0 8px 40px rgba(0,0,0,0.3);
+            transition: all 0.3s ease;
+        }
+        
+        .sticky-header:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 12px 50px rgba(0,0,0,0.4);
+            background: rgba(255,255,255,0.15);
+        }
+        
+        /* Floating Sticky Navigation Bar */
+        .sticky-nav-bar {
+            position: sticky;
+            top: 80px; /* Below the floating header with spacing */
+            z-index: 900;
+            background: rgba(255,255,255,0.1);
+            backdrop-filter: blur(15px);
+            padding: 15px 20px;
+            margin: 10px 10px 30px 10px;
+            border-radius: 15px;
+            border: 1px solid rgba(255,255,255,0.2);
+            box-shadow: 0 8px 40px rgba(0,0,0,0.3);
+            transition: all 0.3s ease;
+        }
+        
+        .sticky-nav-bar:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 12px 50px rgba(0,0,0,0.4);
+            background: rgba(255,255,255,0.15);
         }
         
         /* Phase Info Bar Styling */
@@ -3257,8 +3269,9 @@ $needsSetup = false; // Multi-account system handles setup automatically
             }
             
             .sticky-header {
-                margin: -10px -10px 20px -10px;
-                padding: 15px;
+                margin: 5px 5px 20px 5px;
+                padding: 12px 15px;
+                border-radius: 12px;
             }
             
             .sticky-header h1 {
@@ -3267,9 +3280,10 @@ $needsSetup = false; // Multi-account system handles setup automatically
             }
             
             .sticky-nav-bar {
-                top: 100px; /* Adjusted for mobile */
-                margin: -10px -10px 20px -10px;
-                padding: 10px 15px;
+                top: 70px; /* Adjusted for mobile floating header */
+                margin: 5px 5px 20px 5px;
+                padding: 12px 15px;
+                border-radius: 12px;
             }
             
             .phase-info-bar {
@@ -3280,6 +3294,16 @@ $needsSetup = false; // Multi-account system handles setup automatically
             .bets-table th {
                 font-size: 0.9em;
                 padding: 10px 8px;
+            }
+            
+            .kofi-floating-btn {
+                top: 10px;
+                right: 10px;
+                padding: 6px;
+            }
+            
+            .kofi-floating-btn img {
+                height: 28px !important;
             }
             
             .account-tabs {
@@ -3392,6 +3416,68 @@ $needsSetup = false; // Multi-account system handles setup automatically
         .status-card-enhanced .card-subtitle {
             color: rgba(255,255,255,0.9) !important;
         }
+        
+        /* Ko-fi Donation Button */
+        .kofi-floating-btn {
+            position: fixed;
+            top: 20px;
+            right: 20px;
+            z-index: 1100;
+            background: rgba(255,255,255,0.1);
+            backdrop-filter: blur(10px);
+            border-radius: 12px;
+            padding: 8px;
+            box-shadow: 0 4px 20px rgba(0,0,0,0.3);
+            transition: all 0.3s ease;
+            border: 1px solid rgba(255,255,255,0.2);
+        }
+        
+        .kofi-floating-btn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 8px 30px rgba(0,0,0,0.4);
+            background: rgba(255,255,255,0.15);
+        }
+        
+        .kofi-floating-btn img {
+            display: block;
+            border-radius: 8px;
+        }
+        
+        /* Heat Map Grid Styles */
+        .heatmap-grid {
+            display: grid;
+            grid-template-columns: repeat(7, 1fr);
+            gap: 4px;
+            padding: 20px;
+            max-width: 600px;
+            margin: 0 auto;
+        }
+        
+        .heatmap-day {
+            aspect-ratio: 1;
+            border-radius: 6px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            font-size: 11px;
+            font-weight: bold;
+            cursor: pointer;
+            transition: all 0.2s ease;
+        }
+        
+        .heatmap-day:hover {
+            transform: scale(1.1);
+            z-index: 10;
+        }
+        
+        .heatmap-day.profit-high { background: #4CAF50; color: white; }
+        .heatmap-day.profit-medium { background: #8BC34A; color: white; }
+        .heatmap-day.profit-low { background: #CDDC39; color: black; }
+        .heatmap-day.loss-low { background: #FF9800; color: white; }
+        .heatmap-day.loss-medium { background: #f44336; color: white; }
+        .heatmap-day.loss-high { background: #D32F2F; color: white; }
+        .heatmap-day.no-bets { background: rgba(255,255,255,0.1); color: #666; }
         
         /* === SETUP WIZARD STYLES === */
         .setup-wizard-overlay {
@@ -4100,6 +4186,38 @@ $needsSetup = false; // Multi-account system handles setup automatically
             if (targetNavTab) {
                 targetNavTab.classList.add('active');
             }
+            
+            // Debug analytics tab specifically
+            if (tabName === 'analytics') {
+                setTimeout(() => {
+                    console.log('=== ANALYTICS TAB SWITCH DEBUG ===');
+                    console.log('Analytics tab visible:', document.getElementById('analytics').classList.contains('active'));
+                    console.log('enhancedDashboard still available:', typeof window.enhancedDashboard !== 'undefined');
+                    
+                    // Check if chart containers are visible
+                    const heatmap = document.getElementById('performance-heatmap');
+                    const chart = document.getElementById('balance-chart-container');
+                    
+                    if (heatmap && chart) {
+                        console.log('Chart containers visible:', {
+                            heatmap: heatmap.offsetWidth > 0,
+                            chart: chart.offsetWidth > 0
+                        });
+                        
+                        // Try to reinitialize if enhancedDashboard exists
+                        if (window.enhancedDashboard) {
+                            console.log('🔄 Attempting to reinitialize charts...');
+                            try {
+                                window.enhancedDashboard.generateHeatMap(heatmap, 30);
+                                window.enhancedDashboard.createBalanceChart(chart);
+                                console.log('✅ Charts reinitialized successfully');
+                            } catch (error) {
+                                console.error('❌ Chart reinitialization failed:', error);
+                            }
+                        }
+                    }
+                }, 100);
+            }
         }
         
         // Import method switching function
@@ -4387,6 +4505,11 @@ $needsSetup = false; // Multi-account system handles setup automatically
     </script>
 </head>
 <body>
+<!-- Ko-fi Donation Button -->
+<a href='https://ko-fi.com/Y8Y5BE61A' target='_blank' class='kofi-floating-btn'>
+    <img height='36' style='border:0px;height:36px;' src='https://storage.ko-fi.com/cdn/kofi2.png?v=6' border='0' alt='Buy Me a Coffee at ko-fi.com' />
+</a>
+
 <?php if ($showSetupWizard): ?>
     <!-- Setup Wizard for First-Time Users -->
     <div class="setup-wizard-overlay">
@@ -4765,13 +4888,13 @@ $needsSetup = false; // Multi-account system handles setup automatically
                 
                 <!-- Navigation Tabs -->
                 <div class="nav-tabs">
-                    <button class="nav-tab" onclick="showTab('add-bet')">📝 Add Bet</button>
-                    <button class="nav-tab" onclick="showTab('import-bets')">📥 Import Bets</button>
-                    <button class="nav-tab" onclick="showTab('parlay-calc')">🎲 Parlay Calculator</button>
                     <button class="nav-tab active" onclick="showTab('all-bets')">📋 All Bets</button>
+                    <button class="nav-tab" onclick="showTab('import-bets')">📥 Import Bets</button>
+                    <button class="nav-tab" onclick="showTab('add-bet')">📝 Add Bet</button>
+                    <button class="nav-tab" onclick="showTab('parlay-calc')">🎲 Parlay Calculator</button>
                     <button class="nav-tab" onclick="showTab('analytics')">📊 Analytics</button>
-                    <button class="nav-tab" onclick="showTab('discord')">💬 Discord</button>
                     <button class="nav-tab" onclick="showTab('metrics')">📊 Metrics</button>
+                    <button class="nav-tab" onclick="showTab('discord')">💬 Discord</button>
                 </div>
             </div>
             
@@ -6127,19 +6250,56 @@ $needsSetup = false; // Multi-account system handles setup automatically
             
             // Initialize progress rings and gauges
             setTimeout(function() {
+                // Pass current account betting data to JavaScript
+                window.currentAccountBets = <?= json_encode($allBets) ?>;
+                console.log('✅ Betting data passed to JavaScript:', window.currentAccountBets.length, 'bets');
+                
+                console.log('=== ANALYTICS CHARTS DEBUG ===');
+                
+                // Check if Chart.js is loaded
+                console.log('Chart.js available:', typeof Chart !== 'undefined');
+                
+                // Check if enhancedDashboard exists
+                console.log('enhancedDashboard available:', typeof window.enhancedDashboard !== 'undefined');
+                console.log('enhancedDashboard object:', window.enhancedDashboard);
+                
+                // Check DOM elements
+                const heatmapContainer = document.getElementById('performance-heatmap');
+                const chartContainer = document.getElementById('balance-chart-container');
+                console.log('Heatmap container exists:', !!heatmapContainer);
+                console.log('Chart container exists:', !!chartContainer);
+                
+                // Check current account data
+                console.log('Current account data available:', {
+                    accountId: '<?= $currentAccountId ?>',
+                    totalBets: <?= count($allBets) ?>,
+                    accountBalance: <?= $accountStatus['current_balance'] ?>
+                });
                 
                 if (window.enhancedDashboard) {
+                    console.log('✅ Attempting to initialize charts...');
+                    
                     // Initialize the heat map with actual data
-                    const heatmapContainer = document.getElementById('performance-heatmap');
                     if (heatmapContainer) {
-                        window.enhancedDashboard.generateHeatMap(heatmapContainer, 30);
+                        try {
+                            window.enhancedDashboard.generateHeatMap(heatmapContainer, 30);
+                            console.log('✅ Heat map initialized');
+                        } catch (error) {
+                            console.error('❌ Heat map failed:', error);
+                        }
                     }
                     
                     // Initialize balance chart
-                    const chartContainer = document.getElementById('balance-chart-container');
                     if (chartContainer) {
-                        window.enhancedDashboard.createBalanceChart(chartContainer);
+                        try {
+                            window.enhancedDashboard.createBalanceChart(chartContainer);
+                            console.log('✅ Balance chart initialized');
+                        } catch (error) {
+                            console.error('❌ Balance chart failed:', error);
+                        }
                     }
+                } else {
+                    console.error('❌ enhancedDashboard not available - charts will not load');
                 }
                 
                 // Run text color diagnostics

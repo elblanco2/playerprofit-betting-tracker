@@ -165,15 +165,63 @@ class EnhancedDashboard {
     }
 
     generateHeatMap(container, days = 30) {
-        // Disabled - no longer generate fake heat map data
-        container.innerHTML = '<div style="text-align: center; padding: 40px; color: #ccc;">No betting data available. Heat map will populate when you add bets.</div>';
-        return;
+        // Get actual betting data from the current account
+        const betsData = this.getCurrentAccountBets();
+        
+        if (!betsData || betsData.length === 0) {
+            container.innerHTML = '<div style="text-align: center; padding: 40px; color: #ccc;">No betting data available. Heat map will populate when you add bets.</div>';
+            return;
+        }
+        
+        // Generate real heat map with actual data
+        const heatMapHtml = this.createHeatMapGrid(betsData, days);
+        container.innerHTML = heatMapHtml;
     }
 
+    getCurrentAccountBets() {
+        // Get betting data from PHP - this will be populated by the backend
+        if (typeof window.currentAccountBets !== 'undefined') {
+            return window.currentAccountBets;
+        }
+        return [];
+    }
+    
     getBetDataForDate(date) {
-        // Return empty data since we're not fetching real data yet
-        // This should be connected to actual bet data from the backend
-        return { profit: 0, count: 0 };
+        const bets = this.getCurrentAccountBets();
+        let profit = 0;
+        let count = 0;
+        
+        bets.forEach(bet => {
+            if (bet.date === date) {
+                profit += parseFloat(bet.pnl || 0);
+                count++;
+            }
+        });
+        
+        return { profit, count };
+    }
+    
+    createHeatMapGrid(betsData, days) {
+        const grid = [];
+        const today = new Date();
+        
+        for (let i = days - 1; i >= 0; i--) {
+            const date = new Date(today);
+            date.setDate(date.getDate() - i);
+            const dateStr = date.toISOString().split('T')[0];
+            
+            const dayData = this.getBetDataForDate(dateStr);
+            const intensity = this.getHeatMapClass(dayData.profit);
+            
+            grid.push(`
+                <div class="heatmap-day ${intensity}" title="${dateStr}: $${dayData.profit.toFixed(2)} (${dayData.count} bets)">
+                    <div class="day-number">${date.getDate()}</div>
+                    <div class="day-pnl">$${dayData.profit.toFixed(0)}</div>
+                </div>
+            `);
+        }
+        
+        return `<div class="heatmap-grid">${grid.join('')}</div>`;
     }
 
     getHeatMapClass(profit) {
@@ -204,6 +252,14 @@ class EnhancedDashboard {
             return;
         }
         
+        // Get actual betting data
+        const betsData = this.getCurrentAccountBets();
+        
+        if (!betsData || betsData.length === 0) {
+            container.innerHTML = '<div style="text-align: center; padding: 40px; color: #ccc;">Balance chart will display once you have betting history</div>';
+            return;
+        }
+        
         const canvas = document.createElement('canvas');
         canvas.width = 800;
         canvas.height = 300;
@@ -211,8 +267,8 @@ class EnhancedDashboard {
 
         const ctx = canvas.getContext('2d');
         
-        // Sample data - in real implementation, this would come from actual bet history
-        const data = this.generateSampleBalanceData();
+        // Generate real balance data from actual bets
+        const data = this.generateRealBalanceData(betsData);
         
         this.balanceChart = new Chart(ctx, {
             type: 'line',
@@ -254,20 +310,21 @@ class EnhancedDashboard {
         });
     }
 
-    generateSampleBalanceData() {
-        // Return empty data until we implement real data fetching
+    generateRealBalanceData(betsData) {
         const labels = [];
         const balance = [];
         const drawdownLimit = [];
         
-        // Show message that no data is available
-        for (let i = 0; i < 7; i++) {
-            const date = new Date();
-            date.setDate(date.getDate() - (6 - i));
-            labels.push(date.toLocaleDateString());
-            balance.push(null); // No data points
-            drawdownLimit.push(null);
-        }
+        // Sort bets by date
+        const sortedBets = [...betsData].sort((a, b) => new Date(a.date) - new Date(b.date));
+        
+        // Build balance history from bet sequence
+        sortedBets.forEach(bet => {
+            labels.push(new Date(bet.date).toLocaleDateString());
+            balance.push(bet.account_balance_after);
+            // Assuming 15% drawdown limit from starting balance
+            drawdownLimit.push(bet.account_balance_after * 0.85);
+        });
         
         return { labels, balance, drawdownLimit };
     }
