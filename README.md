@@ -32,7 +32,7 @@ This tracker is built specifically for PlayerProfit's prop firm structure:
 
 ### **1. Start the Tracker**
 ```bash
-cd /Users/luca/scripts/results/betsize/playerprofit
+cd /Users/x/playerprofit
 chmod +x run.sh
 ./run.sh start
 ```

@@ -544,7 +544,8 @@ class PlayerProfitTracker {
         
         // Check inactivity (5 days for funded accounts)
         if ($config['current_phase'] === 'Funded') {
-            $daysSinceActivity = (strtotime(date('Y-m-d')) - strtotime($config['last_activity'])) / (60*60*24);
+            $lastBetDate = $this->getMostRecentBetDate($data['bets']);
+            $daysSinceActivity = $lastBetDate ? (strtotime(date('Y-m-d')) - strtotime($lastBetDate)) / (60*60*24) : 0;
             if ($daysSinceActivity >= 5) {
                 $violations[] = [
                     'type' => 'inactivity',
@@ -577,7 +578,9 @@ class PlayerProfitTracker {
         $maxDrawdown = $this->getMaxDrawdown();
         $totalPicks = count($data['bets']);
         
-        $daysSinceActivity = (strtotime(date('Y-m-d')) - strtotime($config['last_activity'])) / (60*60*24);
+        // Calculate days since activity from most recent bet, not config file
+        $lastBetDate = $this->getMostRecentBetDate($data['bets']);
+        $daysSinceActivity = $lastBetDate ? (strtotime(date('Y-m-d')) - strtotime($lastBetDate)) / (60*60*24) : 0;
         
         // Get risk limits with drawdown protection
         $riskLimits = $this->getRiskLimits(
@@ -636,6 +639,18 @@ class PlayerProfitTracker {
         // For historical max drawdown, we need to track it through bet history
         // But the critical compliance metric is current drawdown from high watermark
         return max(0, $currentDrawdown);
+    }
+    
+    public function getMostRecentBetDate($bets) {
+        if (empty($bets)) return null;
+        
+        $mostRecent = null;
+        foreach ($bets as $bet) {
+            if (!$mostRecent || strtotime($bet['date']) > strtotime($mostRecent)) {
+                $mostRecent = $bet['date'];
+            }
+        }
+        return $mostRecent;
     }
     
     public function advancePhase() {
@@ -2807,6 +2822,8 @@ $needsSetup = false; // Multi-account system handles setup automatically
             text-transform: uppercase;
             letter-spacing: 1px;
             color: white;
+            white-space: nowrap;
+            line-height: 1.2;
         }
         
         /* Progress bars */

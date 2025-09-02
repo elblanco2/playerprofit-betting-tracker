@@ -8,7 +8,7 @@
 
 ### 1. Make Scripts Executable
 ```bash
-cd /Users/luca/scripts/results/betsize/playerprofit
+cd /Users/x/playerprofit
 chmod +x run.sh
 ```
 
