@@ -114,7 +114,7 @@ class PlayerProfitTracker {
     /**
      * Create a new account based on user selection
      */
-    public function createAccount($tier, $size, $customName = null) {
+    public function createAccount($tier, $size, $customName = null, $accountNumber = null, $nickname = null) {
         $accounts = $this->getAllAccounts();
         
         // Generate unique account ID
@@ -137,6 +137,8 @@ class PlayerProfitTracker {
             'name' => $accountName,
             'tier' => $tier,
             'size' => $size,
+            'account_number' => $accountNumber,
+            'nickname' => $nickname,
             'active' => true,
             'created' => date('Y-m-d H:i:s')
         ];
@@ -148,6 +150,30 @@ class PlayerProfitTracker {
         $this->initializeAccountData($accountId, $tier, $size);
         
         return $accountId;
+    }
+    
+    /**
+     * Update account details (nickname and account number)
+     */
+    public function updateAccount($accountId, $nickname = null, $accountNumber = null) {
+        $accounts = $this->getAllAccounts();
+        
+        if (!isset($accounts[$accountId])) {
+            return false;
+        }
+        
+        // Update the account fields
+        if ($nickname !== null) {
+            $accounts[$accountId]['nickname'] = $nickname;
+        }
+        if ($accountNumber !== null) {
+            $accounts[$accountId]['account_number'] = $accountNumber;
+        }
+        
+        // Save updated accounts
+        file_put_contents($this->accountsFile, json_encode($accounts, JSON_PRETTY_PRINT));
+        
+        return true;
     }
     
     /**
@@ -2075,7 +2101,9 @@ if (isset($_POST['action']) && $_POST['action'] === 'create_account') {
                     
                     // Create the specified quantity of this account type
                     for ($i = 1; $i <= $quantity; $i++) {
-                        $accountId = $setupTracker->createAccount($tier, $size);
+                        $accountNumber = isset($_POST['account_number']) ? $_POST['account_number'] : null;
+                        $nickname = isset($_POST['nickname']) ? $_POST['nickname'] : null;
+                        $accountId = $setupTracker->createAccount($tier, $size, null, $accountNumber, $nickname);
                         
                         if ($accountId) {
                             $createdAccounts[] = $accountId;
@@ -2172,6 +2200,22 @@ if ($_POST) {
         exit;
     }
     
+    // Handle account update
+    if (isset($_POST['update_account'])) {
+        $accountId = $_POST['account_id'];
+        $nickname = trim($_POST['nickname']);
+        $accountNumber = trim($_POST['account_number']);
+        
+        if ($tracker->updateAccount($accountId, $nickname, $accountNumber)) {
+            $message = "✅ Account details updated successfully!";
+        } else {
+            $error = "❌ Failed to update account details.";
+        }
+        
+        header("Location: " . $_SERVER['PHP_SELF']);
+        exit;
+    }
+
     if (isset($_POST['add_bet'])) {
         $date = $_POST['date'];
         $sport = $_POST['sport'];
@@ -4449,12 +4493,107 @@ $needsSetup = false; // Multi-account system handles setup automatically
             }
         }
         
-        // Close modal on background click
+        // Edit Account Modal
+        function editAccount(accountId, currentNickname, currentAccountNumber) {
+            const modal = document.createElement('div');
+            modal.className = 'edit-account-modal';
+            modal.style.cssText = `
+                position: fixed; top: 0; left: 0; right: 0; bottom: 0;
+                background: rgba(0,0,0,0.8); z-index: 1000; display: flex;
+                align-items: center; justify-content: center; padding: 20px;
+            `;
+            
+            const form = document.createElement('div');
+            form.style.cssText = `
+                background: #1a1a2e; padding: 30px; border-radius: 12px;
+                border: 2px solid #FFD700; max-width: 500px; width: 100%;
+                box-shadow: 0 20px 40px rgba(255,215,0,0.3);
+            `;
+            
+            form.innerHTML = `
+                <h3 style="margin-top: 0; color: #FFD700;">✏️ Edit Account Details</h3>
+                <form method="POST" style="display: flex; flex-direction: column; gap: 15px;">
+                    <input type="hidden" name="account_id" value="${accountId}">
+                    
+                    <div style="display: flex; flex-direction: column;">
+                        <label style="color: #fff; margin-bottom: 5px;">Account Number (Optional)</label>
+                        <input type="text" name="account_number" value="${currentAccountNumber}" 
+                               placeholder="e.g., ACC-001" 
+                               style="padding: 10px; border: 1px solid #333; background: #2a2a3e; color: #fff; border-radius: 6px;">
+                    </div>
+                    
+                    <div style="display: flex; flex-direction: column;">
+                        <label style="color: #fff; margin-bottom: 5px;">Nickname (Optional)</label>
+                        <input type="text" name="nickname" value="${currentNickname}" 
+                               placeholder="e.g., Main Account" 
+                               style="padding: 10px; border: 1px solid #333; background: #2a2a3e; color: #fff; border-radius: 6px;">
+                    </div>
+                    
+                    <div style="display: flex; gap: 10px; margin-top: 20px;">
+                        <button type="submit" name="update_account" 
+                                style="flex: 1; padding: 12px; background: #FFD700; color: #000; border: none; border-radius: 6px; font-weight: bold; cursor: pointer;">
+                            💾 Save Changes
+                        </button>
+                        <button type="button" onclick="closeAccountModal()" 
+                                style="flex: 1; padding: 12px; background: #666; color: #fff; border: none; border-radius: 6px; cursor: pointer;">
+                            ❌ Cancel
+                        </button>
+                    </div>
+                </form>
+            `;
+            
+            modal.appendChild(form);
+            document.body.appendChild(modal);
+            
+            // Prevent modal from closing when clicking inside the form
+            form.addEventListener('click', function(e) {
+                e.stopPropagation();
+            });
+            
+            // Focus on the first input
+            const firstInput = form.querySelector('input[name="account_number"]');
+            if (firstInput) {
+                setTimeout(() => firstInput.focus(), 100);
+            }
+        }
+        
+        function closeAccountModal() {
+            const modal = document.querySelector('.edit-account-modal');
+            if (modal) {
+                modal.remove();
+            }
+        }
+        
+        // Close modal on background click (but not on form clicks)
         document.addEventListener('click', function(e) {
             if (e.target.classList.contains('edit-bet-modal')) {
                 closeBetModal();
             }
+            if (e.target.classList.contains('edit-account-modal')) {
+                closeAccountModal();
+            }
         });
+        
+        // Add hover effects for edit button
+        const style = document.createElement('style');
+        style.textContent = `
+            .edit-account-btn:hover {
+                background: rgba(186,85,211,1.0) !important;
+                border-color: #DA70D6 !important;
+                color: #fff !important;
+                transform: translateY(-1px);
+                box-shadow: 0 4px 12px rgba(186,85,211,0.6);
+            }
+            
+            .edit-account-modal form {
+                pointer-events: auto;
+            }
+            
+            .edit-account-modal {
+                pointer-events: auto;
+            }
+        `;
+        document.head.appendChild(style);
         
         // === CLEAR ALL DATA CONFIRMATION ===
         function confirmClearAll() {
@@ -4756,9 +4895,30 @@ $needsSetup = false; // Multi-account system handles setup automatically
                 </div>
                 
                 <div class="setup-step" data-step="2">
-                    <h2>Step 2: Review Your Selection</h2>
-                    <div class="selected-accounts-summary" id="selected-accounts-summary">
-                        <!-- Selected accounts will be populated by JavaScript -->
+                    <h2>Step 2: Account Details</h2>
+                    <div class="account-details-form">
+                        <div class="selected-accounts-summary" id="selected-accounts-summary">
+                            <!-- Selected accounts will be populated by JavaScript -->
+                        </div>
+                        
+                        <div class="account-customization-section" style="margin-top: 30px; padding: 20px; background: rgba(255,255,255,0.05); border-radius: 15px; border: 1px solid rgba(255,255,255,0.1);">
+                            <h3 style="color: #fff; margin-bottom: 20px; text-align: center;">🏷️ Customize Your Accounts</h3>
+                            <div class="form-row">
+                                <div class="form-group" style="flex: 1;">
+                                    <label for="account_number">Account Number (Optional)</label>
+                                    <input type="text" id="account_number" name="account_number" placeholder="e.g., ACC-001" class="form-control">
+                                    <small class="form-text">Personal identifier for tracking purposes</small>
+                                </div>
+                                <div class="form-group" style="flex: 1; margin-left: 15px;">
+                                    <label for="nickname">Nickname (Optional)</label>
+                                    <input type="text" id="nickname" name="nickname" placeholder="e.g., Main Account" class="form-control">
+                                    <small class="form-text">Friendly name for this account</small>
+                                </div>
+                            </div>
+                            <div class="customization-note" style="text-align: center; color: #888; font-size: 13px; margin-top: 15px;">
+                                💡 You can always edit these details later from the account settings
+                            </div>
+                        </div>
                     </div>
                 </div>
                 
@@ -4845,8 +5005,25 @@ $needsSetup = false; // Multi-account system handles setup automatically
             ?>
                 <a href="?switch_account=<?= $accountId ?>" 
                    class="account-tab <?= $isActive ? 'active' : '' ?> <?= $statusClass ?>">
-                    <div class="account-name"><?= htmlspecialchars($account['name']) ?></div>
-                    <div class="account-details"><?= $account['tier'] ?> • $<?= number_format($account['size']) ?></div>
+                    <div class="account-name">
+                        <?php if (!empty($account['nickname'])): ?>
+                            <?= htmlspecialchars($account['nickname']) ?>
+                            <?php if (!empty($account['account_number'])): ?>
+                                <span class="account-number">(<?= htmlspecialchars($account['account_number']) ?>)</span>
+                            <?php endif; ?>
+                        <?php else: ?>
+                            <?= htmlspecialchars($account['name']) ?>
+                        <?php endif; ?>
+                    </div>
+                    <div class="account-details">
+                        <?= $account['tier'] ?> • $<?= number_format($account['size']) ?>
+                        <?php if ($isActive): ?>
+                            <button class="edit-account-btn" onclick="event.preventDefault(); event.stopPropagation(); editAccount('<?= $accountId ?>', '<?= htmlspecialchars($account['nickname'] ?? '') ?>', '<?= htmlspecialchars($account['account_number'] ?? '') ?>')" 
+                                    style="margin-left: 10px; padding: 6px 12px; background: rgba(186,85,211,0.8); color: #DA70D6; border: 1px solid #BA55D3; border-radius: 6px; font-size: 12px; cursor: pointer; transition: all 0.2s ease; font-weight: bold;">
+                                ✏️ Edit
+                            </button>
+                        <?php endif; ?>
+                    </div>
                 </a>
             <?php endforeach; ?>
             </div>
