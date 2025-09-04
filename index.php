@@ -114,7 +114,7 @@ class PlayerProfitTracker {
     /**
      * Create a new account based on user selection
      */
-    public function createAccount($tier, $size, $customName = null, $accountNumber = null, $nickname = null) {
+    public function createAccount($tier, $size, $customName = null, $accountNumber = null, $nickname = null, $bettingStyle = 'Professional') {
         $accounts = $this->getAllAccounts();
         
         // Generate unique account ID
@@ -139,6 +139,7 @@ class PlayerProfitTracker {
             'size' => $size,
             'account_number' => $accountNumber,
             'nickname' => $nickname,
+            'betting_style' => $bettingStyle,
             'active' => true,
             'created' => date('Y-m-d H:i:s')
         ];
@@ -153,9 +154,9 @@ class PlayerProfitTracker {
     }
     
     /**
-     * Update account details (nickname and account number)
+     * Update account details (nickname, account number, and betting style)
      */
-    public function updateAccount($accountId, $nickname = null, $accountNumber = null) {
+    public function updateAccount($accountId, $nickname = null, $accountNumber = null, $bettingStyle = null) {
         $accounts = $this->getAllAccounts();
         
         if (!isset($accounts[$accountId])) {
@@ -169,11 +170,21 @@ class PlayerProfitTracker {
         if ($accountNumber !== null) {
             $accounts[$accountId]['account_number'] = $accountNumber;
         }
+        if ($bettingStyle !== null) {
+            $accounts[$accountId]['betting_style'] = $bettingStyle;
+        }
         
         // Save updated accounts
         file_put_contents($this->accountsFile, json_encode($accounts, JSON_PRETTY_PRINT));
         
         return true;
+    }
+    
+    /**
+     * Get current account ID
+     */
+    public function getCurrentAccountId() {
+        return $this->currentAccountId;
     }
     
     /**
@@ -582,6 +593,61 @@ class PlayerProfitTracker {
         }
         
         return $violations;
+    }
+    
+    /**
+     * Analyze betting performance for heater/cold streak detection
+     */
+    public function analyzePerformanceStreaks($bets) {
+        if (empty($bets) || count($bets) < 5) {
+            return [
+                'current_streak' => 'neutral',
+                'streak_length' => 0,
+                'recent_win_rate' => 0,
+                'flags' => []
+            ];
+        }
+        
+        // Sort bets by date (most recent first)
+        usort($bets, function($a, $b) {
+            return strtotime($b['date']) - strtotime($a['date']);
+        });
+        
+        $recentBets = array_slice($bets, 0, 10); // Last 10 bets
+        $wins = 0;
+        
+        // Calculate recent win rate
+        foreach ($recentBets as $bet) {
+            $result = strtoupper($bet['result']);
+            if (in_array($result, ['WIN', 'WON', 'W'])) {
+                $wins++;
+            }
+        }
+        
+        $recentWinRate = (count($recentBets) > 0) ? ($wins / count($recentBets)) * 100 : 0;
+        
+        // Determine current streak
+        $streak = 'neutral';
+        $flags = [];
+        
+        if ($recentWinRate >= 70) {
+            $streak = 'heater';
+            $flags[] = '🔥 CAPPER ON HEATER - Consider increasing bet size within limits';
+            $flags[] = '📈 Hot streak detected (' . round($recentWinRate) . '% win rate)';
+        } elseif ($recentWinRate <= 30) {
+            $streak = 'cold';
+            $flags[] = '🧊 CAPPER COLD STREAK - Consider reducing bet size';
+            $flags[] = '📉 Cold streak detected (' . round($recentWinRate) . '% win rate)';
+        } elseif ($recentWinRate >= 55) {
+            $streak = 'warm';
+            $flags[] = '✅ Solid performance (' . round($recentWinRate) . '% win rate)';
+        }
+        
+        return [
+            'current_streak' => $streak,
+            'recent_win_rate' => $recentWinRate,
+            'flags' => $flags
+        ];
     }
     
     public function getAccountStatus() {
@@ -2103,7 +2169,8 @@ if (isset($_POST['action']) && $_POST['action'] === 'create_account') {
                     for ($i = 1; $i <= $quantity; $i++) {
                         $accountNumber = isset($_POST['account_number']) ? $_POST['account_number'] : null;
                         $nickname = isset($_POST['nickname']) ? $_POST['nickname'] : null;
-                        $accountId = $setupTracker->createAccount($tier, $size, null, $accountNumber, $nickname);
+                        $bettingStyle = isset($_POST['betting_style']) ? $_POST['betting_style'] : 'Professional';
+                        $accountId = $setupTracker->createAccount($tier, $size, null, $accountNumber, $nickname, $bettingStyle);
                         
                         if ($accountId) {
                             $createdAccounts[] = $accountId;
@@ -2205,8 +2272,9 @@ if ($_POST) {
         $accountId = $_POST['account_id'];
         $nickname = trim($_POST['nickname']);
         $accountNumber = trim($_POST['account_number']);
+        $bettingStyle = isset($_POST['betting_style']) ? $_POST['betting_style'] : null;
         
-        if ($tracker->updateAccount($accountId, $nickname, $accountNumber)) {
+        if ($tracker->updateAccount($accountId, $nickname, $accountNumber, $bettingStyle)) {
             $message = "✅ Account details updated successfully!";
         } else {
             $error = "❌ Failed to update account details.";
@@ -2637,6 +2705,14 @@ if (!$showSetupWizard && !$showAccountCreated) {
     $allBets = $tracker->getAllBets();
     $violations = $tracker->checkViolations();
     $discordMessage = $tracker->getDiscordMessage();
+    
+    // Get current account info for streak analysis
+    $currentAccountId = $tracker->getCurrentAccountId();
+    $currentAccount = $tracker->getAllAccounts()[$currentAccountId] ?? [];
+    $performanceStreaks = [];
+    if (isset($currentAccount['betting_style']) && $currentAccount['betting_style'] === 'Tailing') {
+        $performanceStreaks = $tracker->analyzePerformanceStreaks($allBets);
+    }
 } else {
     // Setup wizard mode or account created page - minimal data needed
     if ($showAccountCreated) {
@@ -3018,6 +3094,37 @@ $needsSetup = false; // Multi-account system handles setup automatically
             border-color: #FFC107;
         }
         
+        /* Performance Flag Styles */
+        .performance-flag {
+            background: linear-gradient(135deg, rgba(33,150,243,0.2), rgba(33,150,243,0.1));
+            border: 1px solid #2196F3;
+            border-radius: 8px;
+            padding: 15px;
+            margin: 10px 0;
+            display: flex;
+            align-items: center;
+        }
+        
+        .performance-flag.heater {
+            background: linear-gradient(135deg, rgba(255,87,34,0.2), rgba(255,87,34,0.1));
+            border-color: #FF5722;
+        }
+        
+        .performance-flag.cold {
+            background: linear-gradient(135deg, rgba(96,125,139,0.2), rgba(96,125,139,0.1));
+            border-color: #607D8B;
+        }
+        
+        .performance-flag.warm {
+            background: linear-gradient(135deg, rgba(76,175,80,0.2), rgba(76,175,80,0.1));
+            border-color: #4CAF50;
+        }
+        
+        .flag-icon {
+            font-size: 1.5rem;
+            margin-right: 15px;
+        }
+        
         .violation-icon {
             font-size: 1.5rem;
             margin-right: 15px;
@@ -3276,53 +3383,6 @@ $needsSetup = false; // Multi-account system handles setup automatically
             opacity: 0.9;
         }
 
-        /* Parlay Calculator Styles */
-        .parlay-calculator {
-            background: rgba(255,255,255,0.02);
-            border-radius: 10px;
-            padding: 20px;
-            border: 1px solid rgba(255,255,255,0.1);
-        }
-        
-        .parlay-legs {
-            margin-top: 20px;
-        }
-        
-        .leg-input {
-            display: flex;
-            align-items: center;
-            margin-bottom: 10px;
-            gap: 15px;
-        }
-        
-        .leg-input label {
-            min-width: 150px;
-            color: #FFD700;
-            font-weight: bold;
-        }
-        
-        .leg-input input {
-            flex: 1;
-            max-width: 200px;
-        }
-        
-        .parlay-results {
-            background: rgba(76,175,80,0.1);
-            border: 1px solid #4CAF50;
-            border-radius: 8px;
-            padding: 15px;
-        }
-        
-        .parlay-results h4 {
-            color: #4CAF50;
-            margin-bottom: 15px;
-        }
-        
-        .parlay-results h5 {
-            color: #FFD700;
-            margin-top: 15px;
-            margin-bottom: 10px;
-        }
         
         @media (max-width: 768px) {
             .container {
@@ -3389,20 +3449,6 @@ $needsSetup = false; // Multi-account system handles setup automatically
                 flex-wrap: wrap;
             }
             
-            .leg-input {
-                flex-direction: column;
-                align-items: flex-start;
-                gap: 5px;
-            }
-            
-            .leg-input label {
-                min-width: auto;
-            }
-            
-            .leg-input input {
-                max-width: 100%;
-                width: 100%;
-            }
             
             .account-tabs {
                 flex-direction: column;
@@ -4494,7 +4540,7 @@ $needsSetup = false; // Multi-account system handles setup automatically
         }
         
         // Edit Account Modal
-        function editAccount(accountId, currentNickname, currentAccountNumber) {
+        function editAccount(accountId, currentNickname, currentAccountNumber, currentBettingStyle = 'Professional') {
             const modal = document.createElement('div');
             modal.className = 'edit-account-modal';
             modal.style.cssText = `
@@ -4514,6 +4560,20 @@ $needsSetup = false; // Multi-account system handles setup automatically
                 <h3 style="margin-top: 0; color: #FFD700;">✏️ Edit Account Details</h3>
                 <form method="POST" style="display: flex; flex-direction: column; gap: 15px;">
                     <input type="hidden" name="account_id" value="${accountId}">
+                    
+                    <div style="display: flex; flex-direction: column; margin-bottom: 15px;">
+                        <label style="color: #fff; margin-bottom: 10px; font-weight: bold;">📊 Betting Style</label>
+                        <div style="display: flex; gap: 15px;">
+                            <label style="display: flex; align-items: center; cursor: pointer; color: #fff;">
+                                <input type="radio" name="betting_style" value="Professional" ${currentBettingStyle === 'Professional' ? 'checked' : ''} style="margin-right: 8px;">
+                                🎯 Professional
+                            </label>
+                            <label style="display: flex; align-items: center; cursor: pointer; color: #fff;">
+                                <input type="radio" name="betting_style" value="Tailing" ${currentBettingStyle === 'Tailing' ? 'checked' : ''} style="margin-right: 8px;">
+                                👥 Tailing
+                            </label>
+                        </div>
+                    </div>
                     
                     <div style="display: flex; flex-direction: column;">
                         <label style="color: #fff; margin-bottom: 5px;">Account Number (Optional)</label>
@@ -4903,6 +4963,31 @@ $needsSetup = false; // Multi-account system handles setup automatically
                         
                         <div class="account-customization-section" style="margin-top: 30px; padding: 20px; background: rgba(255,255,255,0.05); border-radius: 15px; border: 1px solid rgba(255,255,255,0.1);">
                             <h3 style="color: #fff; margin-bottom: 20px; text-align: center;">🏷️ Customize Your Accounts</h3>
+                            
+                            <!-- Betting Style Selection -->
+                            <div class="betting-style-section" style="margin-bottom: 30px;">
+                                <h4 style="color: #FFD700; text-align: center; margin-bottom: 15px;">📊 Betting Style</h4>
+                                <div class="betting-style-options" style="display: flex; gap: 20px; justify-content: center;">
+                                    <label class="betting-style-option" style="flex: 1; max-width: 200px; cursor: pointer;">
+                                        <input type="radio" name="betting_style" value="Professional" checked style="margin-right: 8px;">
+                                        <div class="style-card" style="padding: 15px; background: rgba(76,175,80,0.1); border: 2px solid #4CAF50; border-radius: 10px; text-align: center;">
+                                            <div style="font-size: 24px; margin-bottom: 5px;">🎯</div>
+                                            <div style="font-weight: bold; color: #4CAF50;">Professional</div>
+                                            <small style="color: #ccc;">Self-directed betting</small>
+                                        </div>
+                                    </label>
+                                    <label class="betting-style-option" style="flex: 1; max-width: 200px; cursor: pointer;">
+                                        <input type="radio" name="betting_style" value="Tailing" style="margin-right: 8px;">
+                                        <div class="style-card" style="padding: 15px; background: rgba(33,150,243,0.1); border: 2px solid #2196F3; border-radius: 10px; text-align: center;">
+                                            <div style="font-size: 24px; margin-bottom: 5px;">👥</div>
+                                            <div style="font-weight: bold; color: #2196F3;">Tailing</div>
+                                            <small style="color: #ccc;">Following a capper</small>
+                                        </div>
+                                    </label>
+                                </div>
+                            </div>
+                            
+                            <!-- Account Details -->
                             <div class="form-row">
                                 <div class="form-group" style="flex: 1;">
                                     <label for="account_number">Account Number (Optional)</label>
@@ -5018,7 +5103,7 @@ $needsSetup = false; // Multi-account system handles setup automatically
                     <div class="account-details">
                         <?= $account['tier'] ?> • $<?= number_format($account['size']) ?>
                         <?php if ($isActive): ?>
-                            <button class="edit-account-btn" onclick="event.preventDefault(); event.stopPropagation(); editAccount('<?= $accountId ?>', '<?= htmlspecialchars($account['nickname'] ?? '') ?>', '<?= htmlspecialchars($account['account_number'] ?? '') ?>')" 
+                            <button class="edit-account-btn" onclick="event.preventDefault(); event.stopPropagation(); editAccount('<?= $accountId ?>', '<?= htmlspecialchars($account['nickname'] ?? '') ?>', '<?= htmlspecialchars($account['account_number'] ?? '') ?>', '<?= htmlspecialchars($account['betting_style'] ?? 'Professional') ?>')" 
                                     style="margin-left: 10px; padding: 6px 12px; background: rgba(186,85,211,0.8); color: #DA70D6; border: 1px solid #BA55D3; border-radius: 6px; font-size: 12px; cursor: pointer; transition: all 0.2s ease; font-weight: bold;">
                                 ✏️ Edit
                             </button>
@@ -5085,13 +5170,30 @@ $needsSetup = false; // Multi-account system handles setup automatically
                     <button class="nav-tab active" onclick="showTab('all-bets')">📋 All Bets</button>
                     <button class="nav-tab" onclick="showTab('import-bets')">📥 Import Bets</button>
                     <button class="nav-tab" onclick="showTab('add-bet')">📝 Add Bet</button>
-                    <button class="nav-tab" onclick="showTab('parlay-calc')">🎲 Parlay Calculator</button>
                     <button class="nav-tab" onclick="showTab('analytics')">📊 Analytics</button>
                     <button class="nav-tab" onclick="showTab('metrics')">📊 Metrics</button>
                     <button class="nav-tab" onclick="showTab('discord')">💬 Discord</button>
                 </div>
             </div>
             
+            <!-- Performance Streak Flags (Tailing Mode) -->
+            <?php if (!empty($performanceStreaks) && !empty($performanceStreaks['flags'])): ?>
+                <div style="margin-bottom: 20px;">
+                    <?php foreach ($performanceStreaks['flags'] as $flag): ?>
+                        <div class="performance-flag <?= $performanceStreaks['current_streak'] ?>">
+                            <div class="flag-icon">
+                                <?php
+                                if ($performanceStreaks['current_streak'] === 'heater') echo '🔥';
+                                elseif ($performanceStreaks['current_streak'] === 'cold') echo '🧊';
+                                else echo '📊';
+                                ?>
+                            </div>
+                            <div><?= $flag ?></div>
+                        </div>
+                    <?php endforeach; ?>
+                </div>
+            <?php endif; ?>
+
             <!-- Violations Display -->
             <?php if (!empty($violations)): ?>
                 <div style="margin-bottom: 30px;">
@@ -5473,82 +5575,6 @@ $needsSetup = false; // Multi-account system handles setup automatically
             </div>
             </div>
             
-            <!-- Parlay Calculator Tab -->
-            <div id="parlay-calc" class="tab-content">
-                <h3>🎲 Parlay Calculator</h3>
-                <p style="color: #FFC107; margin-bottom: 20px;">
-                    <strong>Calculate parlay payouts</strong> - Add up to 10 legs with American odds
-                </p>
-                
-                <div class="parlay-calculator">
-                    <div class="form-row">
-                        <div class="form-group">
-                            <label>Bet Amount ($)</label>
-                            <input type="number" id="parlay-stake" step="0.01" min="1" placeholder="1000" onchange="calculateParlay()">
-                        </div>
-                        <div class="form-group">
-                            <label>Parlay Payout</label>
-                            <div id="parlay-payout" style="font-size: 1.5rem; font-weight: bold; color: #4CAF50; padding: 12px; background: rgba(76,175,80,0.1); border-radius: 8px; border: 1px solid #4CAF50;">
-                                $0.00
-                            </div>
-                        </div>
-                    </div>
-                    
-                    <div class="parlay-legs">
-                        <h4>Parlay Legs</h4>
-                        <div id="legs-container">
-                            <div class="leg-input" data-leg="1">
-                                <label>Leg #1 Money Line</label>
-                                <input type="number" class="leg-odds" placeholder="-149" onchange="calculateParlay()">
-                            </div>
-                            <div class="leg-input" data-leg="2">
-                                <label>Leg #2 Money Line</label>
-                                <input type="number" class="leg-odds" placeholder="-180" onchange="calculateParlay()">
-                            </div>
-                            <div class="leg-input" data-leg="3">
-                                <label>Leg #3 Money Line</label>
-                                <input type="number" class="leg-odds" placeholder="-110" onchange="calculateParlay()">
-                            </div>
-                            <div class="leg-input" data-leg="4">
-                                <label>Leg #4 Money Line</label>
-                                <input type="number" class="leg-odds" placeholder="" onchange="calculateParlay()">
-                            </div>
-                            <div class="leg-input" data-leg="5">
-                                <label>Leg #5 Money Line</label>
-                                <input type="number" class="leg-odds" placeholder="" onchange="calculateParlay()">
-                            </div>
-                            <div class="leg-input" data-leg="6">
-                                <label>Leg #6 Money Line</label>
-                                <input type="number" class="leg-odds" placeholder="" onchange="calculateParlay()">
-                            </div>
-                            <div class="leg-input" data-leg="7">
-                                <label>Leg #7 Money Line</label>
-                                <input type="number" class="leg-odds" placeholder="" onchange="calculateParlay()">
-                            </div>
-                            <div class="leg-input" data-leg="8">
-                                <label>Leg #8 Money Line</label>
-                                <input type="number" class="leg-odds" placeholder="" onchange="calculateParlay()">
-                            </div>
-                            <div class="leg-input" data-leg="9">
-                                <label>Leg #9 Money Line</label>
-                                <input type="number" class="leg-odds" placeholder="" onchange="calculateParlay()">
-                            </div>
-                            <div class="leg-input" data-leg="10">
-                                <label>Leg #10 Money Line</label>
-                                <input type="number" class="leg-odds" placeholder="" onchange="calculateParlay()">
-                            </div>
-                        </div>
-                    </div>
-                    
-                    <div class="parlay-results" id="parlay-details" style="margin-top: 20px; display: none;">
-                        <div style="background: rgba(255,255,255,0.05); padding: 20px; border-radius: 10px;">
-                            <h4>Calculation Details</h4>
-                            <div id="combined-odds"></div>
-                            <div id="individual-legs"></div>
-                        </div>
-                    </div>
-                </div>
-            </div>
             
             <!-- All Bets Tab -->
             <div id="all-bets" class="tab-content active">
