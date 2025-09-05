@@ -433,11 +433,14 @@ class PlayerProfitTracker {
         // Calculate P&L - Use exact profit if provided (for imports)
         if ($exactProfit !== null) {
             $pnl = $exactProfit;
+            error_log("🔍 ADDBET: Using exactProfit=$exactProfit for " . $selection);
         } else if ($isParlay && !empty($parlayLegs)) {
             $parlayOdds = $this->calculateParlayOdds($parlayLegs);
             $pnl = $this->calculatePayout($stake, $parlayOdds, $result);
+            error_log("🔍 ADDBET: Using parlay calculation for " . $selection . " pnl=$pnl");
         } else {
             $pnl = $this->calculatePayout($stake, $odds, $result);
+            error_log("🔍 ADDBET: Using calculatePayout for " . $selection . " (stake=$stake, odds=$odds, result=$result) pnl=$pnl");
         }
         
         // Create bet record
@@ -904,6 +907,7 @@ class PlayerProfitTracker {
         
         // Debug logging
         error_log("CSV Batch Import started. Processing lines $startLine-$endLine of $totalLines");
+        error_log("🔍 FIRST 5 CSV LINES TO PROCESS: " . json_encode(array_slice($batchLines, 0, 5)));
         
         
         foreach ($batchLines as $lineNum => $line) {
@@ -913,17 +917,19 @@ class PlayerProfitTracker {
             $fields = str_getcsv($line);
             if (count($fields) < 6) {
                 $errors++;
-                $errorMessages[] = "Line " . ($lineNum + 1) . ": Not enough fields (expected 6, got " . count($fields) . ")";
+                $errorMessages[] = "Line " . ($lineNum + 1) . ": Not enough fields (expected 6-7, got " . count($fields) . ")";
                 continue;
             }
             
-            // Parse CSV fields: Date, Sport, Selection, Stake, Odds, Result
+            // Parse CSV fields: Date, Sport, Selection, Stake, Odds, Result[, Profit]
             $date = trim($fields[0]);
             $sport = trim($fields[1]);
             $selection = trim($fields[2]);
             $stakeRaw = trim($fields[3]);
             $oddsRaw = trim($fields[4]);
             $result = strtoupper(trim($fields[5]));
+            
+            // Note: No longer extracting profit column - let import system calculate profit
             
             // Advanced stake parsing
             $stake = floatval(str_replace(['$', ',', '+'], '', $stakeRaw));
@@ -1019,7 +1025,7 @@ class PlayerProfitTracker {
                 'stake' => $stake,
                 'odds' => $odds,
                 'result' => $result,
-                'exactProfit' => $exactProfit,
+                'exactProfit' => null,  // Let system calculate profit
                 'is_duplicate' => $isDuplicate,
                 'date_obj' => $dateObj
             ];
@@ -1030,12 +1036,48 @@ class PlayerProfitTracker {
             return $a['date_obj'] <=> $b['date_obj'];
         });
         
+        // 🔍 DIAGNOSTIC LOGGING - Parsed vs Filtered counts
+        $totalParsed = count($parsedBets);
+        $duplicates = array_filter($parsedBets, function($bet) { return $bet['is_duplicate']; });
+        $duplicateCount = count($duplicates);
+        $readyToImport = $totalParsed - $duplicateCount;
+        
+        error_log("🔍 IMPORT VALIDATION SUMMARY: " . json_encode([
+            'csv_lines_processed' => count($batchLines),
+            'total_bets_parsed' => $totalParsed,
+            'duplicate_bets_found' => $duplicateCount,
+            'ready_for_import' => $readyToImport,
+            'errors_during_parsing' => $errors,
+            'warnings_generated' => count($warnings)
+        ]));
+        
+        // 🔍 DETAILED ERROR LOGGING
+        if ($errors > 0) {
+            error_log("🚨 CSV PARSING ERRORS: " . json_encode(array_slice($errorMessages, 0, 10)));
+        }
+        if (!empty($warnings)) {
+            error_log("⚠️ CSV PARSING WARNINGS: " . json_encode(array_slice($warnings, 0, 5)));
+        }
+        
         
         // Second pass: Import validated and sorted bets
         foreach ($parsedBets as $bet) {
             try {
-                // Debug logging
-                error_log("Importing bet: " . json_encode($bet));
+                // 🔍 DIAGNOSTIC LOGGING - Validate assumptions
+                error_log("🔍 BET IMPORT DEBUG: " . json_encode([
+                    'selection' => $bet['selection'],
+                    'result' => $bet['result'],
+                    'stake' => $bet['stake'],
+                    'odds' => $bet['odds'],
+                    'exactProfit' => $bet['exactProfit'] ?? 'NULL',
+                    'has_exactProfit' => isset($bet['exactProfit']),
+                    'line_number' => $bet['line'] ?? 'unknown'
+                ]));
+                
+                // Check if exactProfit is missing for certain result types
+                if (in_array($bet['result'], ['REFUNDED', 'CASHED OUT', 'PUSH']) && !isset($bet['exactProfit'])) {
+                    error_log("🚨 MISSING exactProfit for special result: " . $bet['result'] . " - " . $bet['selection']);
+                }
                 
                 $addResult = $this->addBet(
                     $bet['date'], 
@@ -1046,17 +1088,39 @@ class PlayerProfitTracker {
                     $bet['result'], 
                     false, 
                     [],
-                    true  // Import mode - bypass bet size validation
+                    true,  // Import mode - bypass bet size validation
+                    $bet['exactProfit'] ?? null  // 🔍 CRITICAL FIX: Pass exactProfit!
                 );
                 
-                // Debug logging
-                error_log("Add bet result: " . json_encode($addResult));
+                // 🔍 DIAGNOSTIC LOGGING - Check calculation path used
+                error_log("🔍 CALCULATION PATH: " . json_encode([
+                    'selection' => $bet['selection'],
+                    'used_exactProfit' => isset($bet['exactProfit']),
+                    'input_profit' => $bet['exactProfit'] ?? 'calculated',
+                    'result_pnl' => $addResult['pnl'] ?? 'unknown',
+                    'success' => $addResult['success'] ?? false
+                ]));
                 
                 if ($addResult['success']) {
                     $imported++;
+                    error_log("✅ SUCCESSFUL IMPORT: " . $bet['selection'] . " - Balance: $" . number_format($addResult['new_balance'] ?? 0, 2));
                 } else {
                     $errors++;
-                    $errorMessages[] = "Line " . $bet['line'] . ": " . $addResult['error'];
+                    $errorMessage = $addResult['error'] ?? 'Unknown error';
+                    $errorMessages[] = "Line " . $bet['line'] . ": " . $errorMessage;
+                    
+                    // 🔍 DETAILED addBet failure analysis
+                    error_log("❌ IMPORT FAILED: " . $bet['selection'] . " - Error: " . $errorMessage);
+                    error_log("🔍 addBet FAILURE DETAILS: " . json_encode([
+                        'date' => $bet['date'],
+                        'sport' => $bet['sport'], 
+                        'selection' => $bet['selection'],
+                        'stake' => $bet['stake'],
+                        'odds' => $bet['odds'],
+                        'result' => $bet['result'],
+                        'line' => $bet['line'],
+                        'full_addResult' => $addResult
+                    ]));
                 }
             } catch (Exception $e) {
                 $errors++;
@@ -1090,6 +1154,16 @@ class PlayerProfitTracker {
                 $this->recalculateStats();
             }
             $data = $this->loadData();
+            
+            // 🔍 FINAL IMPORT SUMMARY
+            error_log("🏁 FINAL IMPORT SUMMARY: " . json_encode([
+                'total_bets_parsed' => count($parsedBets),
+                'successfully_imported' => $imported,
+                'errors_encountered' => $errors,
+                'final_balance' => $data['account_balance'],
+                'import_success_rate' => count($parsedBets) > 0 ? round(($imported / count($parsedBets)) * 100, 1) . "%" : "N/A"
+            ]));
+            
             return [
                 'success' => true,
                 'count' => $imported,
@@ -1431,7 +1505,7 @@ OUTPUT (CSV only, no explanations):";
                     'content' => $prompt
                 ]
             ],
-            'max_tokens' => 8000,
+            'max_tokens' => 4000,  // Reduced for OpenAI's smaller context window (8192 total)
             'temperature' => 0.1
         ];
         
@@ -1461,6 +1535,10 @@ OUTPUT (CSV only, no explanations):";
     }
     
     private function callGoogleAI($prompt, $apiKey) {
+        // Debug logging for Google API
+        error_log("🔍 Google API Debug - API Key format: " . (strlen($apiKey) > 10 ? substr($apiKey, 0, 8) . "..." : 'too short'));
+        error_log("🔍 Google API Debug - API Key starts with AIza: " . (strpos($apiKey, 'AIza') === 0 ? 'YES' : 'NO'));
+        
         $data = [
             'contents' => [
                 [
@@ -1475,9 +1553,16 @@ OUTPUT (CSV only, no explanations):";
             ]
         ];
         
-        return $this->makeLLMRequest("https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={$apiKey}", $data, [
+        $url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={$apiKey}";
+        error_log("🔍 Google API Debug - Request URL: " . $url);
+        error_log("🔍 Google API Debug - Request data: " . json_encode($data));
+        
+        $result = $this->makeLLMRequest($url, $data, [
             'Content-Type: application/json'
         ]);
+        
+        error_log("🔍 Google API Debug - Response: " . json_encode($result));
+        return $result;
     }
     
     private function callOllama($prompt, $serverUrl) {
@@ -1519,7 +1604,12 @@ OUTPUT (CSV only, no explanations):";
         }
         
         if ($httpCode !== 200) {
-            return ['success' => false, 'error' => "API request failed with status {$httpCode}"];
+            error_log("🔍 API Request Failed - HTTP {$httpCode}: " . $response);
+            $errorDetails = "API request failed with status {$httpCode}";
+            if ($response) {
+                $errorDetails .= ": " . substr($response, 0, 200);
+            }
+            return ['success' => false, 'error' => $errorDetails];
         }
         
         $result = json_decode($response, true);
@@ -1650,12 +1740,36 @@ OUTPUT (CSV only, no explanations):";
         }
         
         // If message is large and contains many betting indicators, process in batches
-        if (strlen($userMessage) > 10000 && $indicatorCount > 15) {
+        if (strlen($userMessage) > 3000 && $indicatorCount > 5) {
+            error_log("🔍 AUTO-BATCHING TRIGGERED: Message length=" . strlen($userMessage) . ", Indicators=" . $indicatorCount);
             return $this->chatWithLLMBatched($userMessage, $apiKey, $provider);
         }
+        
+        // Debug logging for batching decision
+        error_log("🔍 BATCHING DECISION: Length=" . strlen($userMessage) . ", Indicators=" . $indicatorCount . " -> " . (strlen($userMessage) > 3000 && $indicatorCount > 5 ? "BATCH" : "SINGLE"));
 
         // Build conversation prompt for chat context
-        $systemPrompt = "You are an expert betting data analyst helping users format their PlayerProfit betting history with 100% accuracy. Your job is to:\n\n1. Extract EXACT profit values from PlayerProfit data\n2. Convert to enhanced CSV format: Date,Sport,Selection,Stake,Odds,Result,Profit\n3. Validate calculations before output\n4. Ensure perfect balance matching with PlayerProfit\n\n⚠️ CRITICAL: PROCESS EVERY SINGLE BET - NO EXCEPTIONS!\n- NEVER skip any bets, regardless of format issues\n- NEVER truncate your output due to length\n- NEVER abbreviate or summarize bet data\n- COUNT your output lines and ensure they match the input bet count\n- ALWAYS finish processing the complete dataset\n\n🎯 PROFIT-FIRST ACCURACY SYSTEM:\nFor PlayerProfit data, ALWAYS extract the exact \"Profit\" value:\n- Look for \"Profit: 714.29\" → Use 714.29 as 7th CSV field\n- Look for \"Profit: -1000.00\" → Use -1000.00 as 7th CSV field\n- This ensures 100% balance accuracy with PlayerProfit\n\nRequired CSV format (7 fields):\n- Date: YYYY-MM-DD format\n- Sport: NFL, NBA, MLB, NHL, Tennis, Soccer, etc.\n- Selection: Team name + bet type (e.g., 'Patriots ML', 'Lakers +5.5')\n- Stake: Numeric value from \"Total Pick\" field\n- Odds: American format (-110, +120, etc.) - calculate from profit for reference\n- Result: WIN, LOSS, PUSH, REFUNDED, or CASHED OUT\n- Profit: EXACT profit value from PlayerProfit (e.g., 714.29, -1000.00)\n\nODDS CALCULATION & VALIDATION:\n1. Extract stake from \"Total Pick\" field\n2. Extract exact profit from \"Profit\" field\n3. Calculate odds for reference: ratio = profit ÷ stake\n   - If ratio ≥ 1: odds = +[ratio × 100]\n   - If ratio < 1: odds = -[100 ÷ ratio]\n4. VALIDATE: Check if calculated odds make sense\n5. If validation fails, flag with warning but include bet anyway\n\nEXAMPLE EXTRACTIONS:\n- \"Total Pick: 1000.00, Profit: 714.29\" → ratio=0.714 → odds=-140\n- \"Total Pick: 1200.00, Profit: 833.33\" → ratio=0.694 → odds=-144\n- \"Total Pick: 1000.00, Profit: 2551.75\" → ratio=2.552 → odds=+255\n\nValidation Examples:\n2023-08-15,MLB,Colin Rea Under 17.5,1000.00,-140,WIN,714.29\n2023-08-14,MLB,Matthew Boyd Over 17.5,1000.00,-144,WIN,833.33\n2023-08-04,Multi,3-leg Parlay,1000.00,+255,WIN,2551.75\n2023-08-27,MLB,Tampa Bay Rays ML,1000.00,-110,LOSS,-1000.00\n\nCRITICAL VALIDATION RULES:\n- ALWAYS extract exact \"Profit\" values from PlayerProfit\n- VALIDATE calculated odds match expected ranges\n- FLAG any major discrepancies between displayed odds and calculated odds\n- Include all bets even if validation concerns exist";
+        $systemPrompt = "You are an expert betting data analyst helping users format their PlayerProfit betting history. Your job is to:\n\n1. Convert betting data to standard CSV format: Date,Sport,Selection,Stake,Odds,Result\n2. Let the import system calculate profits based on odds and results\n3. Focus on extracting accurate stakes and odds\n4. Ensure all bet types are properly categorized\n\n⚠️ CRITICAL: PROCESS EVERY SINGLE BET - NO EXCEPTIONS!\n- NEVER skip any bets, regardless of format issues\n- NEVER truncate your output due to length\n- NEVER abbreviate or summarize bet data\n- COUNT your output lines and ensure they match the input bet count\n- ALWAYS finish processing the complete dataset\n\n🚨 HANDLE ALL RESULT TYPES - CRITICAL FOR ACCURACY:\n- Won → Result: WIN\n- Lost → Result: LOSS\n- Refunded → Result: REFUNDED (stake returned, must be included!)\n- Cashed Out → Result: CASHED OUT\n- Push/Tie → Result: PUSH\n\n🎯 STANDARD CSV FORMAT (6 fields):\n- Date: YYYY-MM-DD format\n- Sport: NFL, NBA, MLB, NHL, Tennis, Soccer, Multi (for parlays), etc.\n- Selection: Team name + bet type (e.g., 'Patriots ML', 'Lakers +5.5', 'Detroit Tigers + White Sox parlay')\n- Stake: Numeric value from \"Total Pick\" field\n- Odds: American format from displayed odds (-110, +120, etc.)\n- Result: WIN, LOSS, PUSH, REFUNDED, or CASHED OUT\n\n" .
+        "ODDS EXTRACTION:\n" .
+        "1. Extract stake from \"Total Pick\" field\n" .
+        "2. Extract odds from displayed odds in the betting data\n" .
+        "3. Use American format (-110, +120, etc.)\n" .
+        "4. If odds aren't clear, estimate from typical book odds\n\n" .
+        "EXAMPLE EXTRACTIONS:\n" .
+        "- \"Total Pick: 1000.00\" with typical MLB bet → -110 or -120 odds\n" .
+        "- Parlay with multiple legs → higher positive odds like +255, +180\n" .
+        "- Favorites → negative odds like -140, -155\n" .
+        "- Underdogs → positive odds like +120, +180\n\n" .
+        "Output Examples:\n" .
+        "2023-08-15,Baseball,Colin Rea Under 17.5,1000.00,-140,WIN\n" .
+        "2023-08-14,Baseball,Matthew Boyd Over 17.5,1000.00,-144,WIN\n" .
+        "2023-08-04,Multi,3-leg Parlay,1000.00,+255,WIN\n" .
+        "2023-08-27,Baseball,Tampa Bay Rays ML,1000.00,-110,LOSS\n\n" .
+        "CRITICAL VALIDATION RULES:\n" .
+        "- Extract stakes accurately from \"Total Pick\" values\n" .
+        "- Use reasonable odds estimates when actual odds aren't clear\n" .
+        "- Include all bets even if some details are unclear\n" .
+        "- Focus on complete data extraction over perfect precision";
 
         $chatPrompt = $systemPrompt . "\n\nUser: " . $userMessage . "\n\nAssistant:";
         
@@ -1667,8 +1781,11 @@ OUTPUT (CSV only, no explanations):";
      * Process large betting data in batches to avoid AI truncation
      */
     public function chatWithLLMBatched($userMessage, $apiKey, $provider) {
+        // Use smaller chunks for OpenAI due to context limitations
+        $maxCharsPerBatch = ($provider === 'openai') ? 4000 : 8000;
+        
         // Split the data into manageable chunks
-        $chunks = $this->splitBettingDataForAI($userMessage);
+        $chunks = $this->splitBettingDataForAI($userMessage, $maxCharsPerBatch);
         
         error_log("🔍 BATCH PROCESSING DEBUG - Split data into " . count($chunks) . " chunks");
         
@@ -1676,26 +1793,51 @@ OUTPUT (CSV only, no explanations):";
         $totalProcessed = 0;
         $batchErrors = [];
         
-        // Create a specialized system prompt for batch processing
+        // Create a specialized system prompt for batch processing with comprehensive edge case handling
         $batchSystemPrompt = "You are processing a BATCH of PlayerProfit betting data. This is part " . "X" . " of a larger dataset.\n\n" .
-        "🎯 PROFIT-FIRST ACCURACY SYSTEM:\n" .
-        "- Extract EXACT \"Profit\" values from PlayerProfit data\n" .
-        "- Output format: Date,Sport,Selection,Stake,Odds,Result,Profit\n" .
-        "- Calculate odds from profit for validation\n" .
+        "🎯 STANDARD CSV FORMAT:\n" .
+        "- Output format: Date,Sport,Selection,Stake,Odds,Result\n" .
+        "- Let the import system calculate profit from odds and result\n" .
         "- Process ALL bets in this batch - no truncation allowed\n" .
         "- Output ONLY the CSV data lines (no headers, no explanations)\n\n" .
+        
+        "🚨 CRITICAL: HANDLE ALL RESULT TYPES:\n" .
+        "- Won → Result: WIN\n" .
+        "- Lost → Result: LOSS\n" .
+        "- Refunded → Result: REFUNDED\n" .
+        "- Cashed Out → Result: CASHED OUT\n" .
+        "- Push/Tie → Result: PUSH\n\n" .
+        
+        "SPECIAL CASE EXAMPLES:\n" .
+        "- 'Refunded Aug 18... Total Pick 65.00' → 2023-08-18,Baseball,Team ML,65.00,-110,REFUNDED\n" .
+        "- 'Cashed Out Aug 19... Total Pick 50.00' → 2023-08-19,Football,Team +7,50.00,-105,CASHED OUT\n" .
+        "- 'Won Sep 3... Total Pick 87.50' → 2023-09-03,Baseball,Over 8.5,87.50,-175,WIN\n" .
+        "- 'Lost Sep 1... Total Pick 77.50' → 2023-09-01,Baseball,Under 17.5,77.50,-155,LOSS\n\n" .
+        
         "FORMAT REQUIREMENTS:\n" .
         "- Date: YYYY-MM-DD format (e.g., 2023-08-27)\n" .
         "- Sport: Single word (Baseball, Football, Basketball, etc.)\n" .
         "- Selection: Brief description (e.g., 'Patriots ML', 'Over 8.5')\n" .
         "- Stake: From \"Total Pick\" field (e.g., 1000.00, 1150.00)\n" .
-        "- Odds: Calculate from profit ratio (e.g., -140, +255)\n" .
-        "- Result: EXACTLY one of: WIN, LOSS, PUSH, REFUNDED\n" .
-        "- Profit: EXACT value from \"Profit\" field (e.g., 714.29, -1000.00)\n\n" .
+        "- Odds: American format from displayed odds (e.g., -140, +255)\n" .
+        "- Result: EXACTLY one of: WIN, LOSS, PUSH, REFUNDED, CASHED OUT\n\n" .
+        
+        "🎯 PARLAY DETECTION:\n" .
+        "- Multiple selections in one bet → Sport: Multi, Selection: describe parlay\n" .
+        "- Example: 'Detroit Tigers -1.5 + Chicago White Sox Over 2.5' → Multi,'Detroit Tigers + White Sox parlay'\n" .
+        "- Parlay odds: Calculate from profit ratio (often high like +264, +132)\n\n" .
+        
         "PROFIT EXTRACTION EXAMPLES:\n" .
         "\"Total Pick: 1000.00, Profit: 714.29\" → CSV: ...,1000.00,-140,WIN,714.29\n" .
-        "\"Total Pick: 1200.00, Profit: -1200.00\" → CSV: ...,1200.00,-110,LOSS,-1200.00\n\n" .
-        "VALIDATION: Ensure calculated odds roughly match profit ratios\n\n" .
+        "\"Total Pick: 1200.00, Profit: -1200.00\" → CSV: ...,1200.00,-110,LOSS,-1200.00\n" .
+        "\"Refunded... Total Pick: 65.00, Profit: 0.00\" → CSV: ...,65.00,-130,REFUNDED,0.00\n" .
+        "\"Cashed Out... Total Pick: 50.00, Profit: -5.00\" → CSV: ...,50.00,-105,CASHED OUT,-5.00\n\n" .
+        
+        "⚠️ VALIDATION REQUIREMENTS:\n" .
+        "- Count your output lines and log the count\n" .
+        "- Every bet with 'Total Pick' must produce exactly one CSV line\n" .
+        "- Never skip REFUNDED, CASHED OUT, or unusual profit values\n" .
+        "- Double-check profit signs: losses should be negative\n\n" .
         "Convert this PlayerProfit data to enhanced CSV format:";
         
         foreach ($chunks as $chunkIndex => $chunk) {
@@ -1710,6 +1852,9 @@ OUTPUT (CSV only, no explanations):";
             error_log("🔍 BATCH CHUNK DEBUG - Chunk " . ($chunkIndex + 1) . " result: " . json_encode([
                 'success' => $chunkResult['success'] ?? false,
                 'has_response' => isset($chunkResult['response']),
+                'input_indicators' => substr_count($chunk, 'Total Pick'),
+                'refunded_in_input' => substr_count(strtolower($chunk), 'refunded'),
+                'cashed_out_in_input' => substr_count(strtolower($chunk), 'cashed out'),
                 'response_length' => isset($chunkResult['response']) ? strlen($chunkResult['response']) : 0,
                 'error' => $chunkResult['error'] ?? 'No error field'
             ]));
@@ -1826,19 +1971,26 @@ OUTPUT (CSV only, no explanations):";
             ];
         }
         
-        // Combine all CSV lines with header
+        // Combine all CSV lines with header (6-column format - import calculates profit)
         $combinedCsv = "Date,Sport,Selection,Stake,Odds,Result\n" . implode("\n", $allCsvLines);
         
         error_log("🔍 BATCH FINAL DEBUG - Total CSV lines produced: " . count($allCsvLines));
         error_log("🔍 BATCH FINAL DEBUG - Batch errors: " . count($batchErrors));
         
-        // Return in the same format as regular chat - FIXED: Added message field
+        // Show only a preview to avoid response truncation, but store full CSV for import
+        $previewLines = array_slice(explode("\n", $combinedCsv), 0, 6); // Header + 5 data lines
+        $csvPreview = implode("\n", $previewLines);
+        if (count($allCsvLines) > 5) {
+            $csvPreview .= "\n... and " . (count($allCsvLines) - 5) . " more betting records";
+        }
+        
         $responseMessage = "📊 **Batch Processing Complete!**\n\n" .
                          "Processed **" . count($chunks) . " batches** of your betting data.\n" .
                          "Found **" . count($allCsvLines) . " betting records** total.\n\n" .
                          "**📥 Ready to Import**\n" .
-                         "```csv\n" . $combinedCsv . "\n```\n\n" .
-                         "All " . count($allCsvLines) . " bets are ready for import! Click the Import button above.";
+                         "```csv\n" . $csvPreview . "\n```\n\n" .
+                         "All " . count($allCsvLines) . " bets are ready for import! Click the Import button above.\n\n" .
+                         "FULL_CSV_DATA:" . $combinedCsv; // Embed full data at end for import detection
         
         return [
             'success' => true,
@@ -1878,7 +2030,7 @@ OUTPUT (CSV only, no explanations):";
                         ['role' => 'system', 'content' => $systemPrompt],
                         ['role' => 'user', 'content' => $userMessage]
                     ],
-                    'max_tokens' => 8000,
+                    'max_tokens' => 4000,  // Reduced for OpenAI's context limit
                     'temperature' => 0.1
                 ];
                 break;
@@ -2043,6 +2195,10 @@ OUTPUT (CSV only, no explanations):";
                         'maxOutputTokens' => 50
                     ]
                 ];
+                
+                // Additional logging for Google API test
+                error_log("🔍 Google API Test - URL: " . $url);
+                error_log("🔍 Google API Test - Data: " . json_encode($data));
                 break;
 
             case 'ollama':
@@ -2435,18 +2591,44 @@ if ($_POST) {
         $inputBetCount = substr_count(strtolower($userMessage), 'pick id') + substr_count(strtolower($userMessage), 'total pick') + substr_count(strtolower($userMessage), 'won') + substr_count(strtolower($userMessage), 'lost');
         error_log("🔍 AI CHAT DEBUG - Estimated bets in input: " . $inputBetCount);
         
+        // 🔍 EMERGENCY DEBUG - Log to file for troubleshooting
+        error_log("🔍 AI CHAT START - Input length: " . strlen($userMessage) . " chars", 3, "/tmp/playerprofit_debug.log");
+        
         $chatResult = $tracker->chatWithLLM($userMessage, $apiKey, $provider);
         
-        // Enhanced response analysis
+        // 🔍 EMERGENCY DEBUG - Log AI response
         if (isset($chatResult['response'])) {
-            $responseLength = strlen($chatResult['response']);
-            $responseLinesCount = substr_count($chatResult['response'], "\n");
+            error_log("🔍 AI RESPONSE: " . substr($chatResult['response'], 0, 500) . "...", 3, "/tmp/playerprofit_debug.log");
+        } else {
+            error_log("🔍 AI RESPONSE ERROR: " . json_encode($chatResult), 3, "/tmp/playerprofit_debug.log");
+        }
+        
+        // 🔍 DIAGNOSTIC LOGGING - AI Response Analysis
+        if (isset($chatResult['response'])) {
+            $response = $chatResult['response'];
+            $responseLength = strlen($response);
+            $responseLinesCount = substr_count($response, "\n");
+            
+            // Check for special result types in AI output
+            $refundedCount = substr_count(strtolower($response), 'refunded');
+            $cashedOutCount = substr_count(strtolower($response), 'cashed out');
+            $pushCount = substr_count(strtolower($response), 'push');
+            $csvLinesCount = substr_count($response, ',');
+            
+            error_log("🔍 AI RESPONSE ANALYSIS: " . json_encode([
+                'response_length' => $responseLength,
+                'csv_lines_estimated' => $csvLinesCount,
+                'refunded_mentions' => $refundedCount,
+                'cashed_out_mentions' => $cashedOutCount,
+                'push_mentions' => $pushCount,
+                'contains_profit_column' => strpos($response, 'Profit') !== false
+            ]));
             $csvLinesCount = 0;
             
             // Count actual CSV data lines (exclude headers and non-data lines)
             $lines = explode("\n", $chatResult['response']);
             foreach ($lines as $line) {
-                if (preg_match('/^\d{4}-\d{2}-\d{2},[^,]*,[^,]*,[\d.]+,[-+]?\d+,(WIN|LOSS|PUSH|REFUNDED)/', trim($line))) {
+                if (preg_match('/^\d{4}-\d{2}-\d{2},[^,]*,[^,]*,[\d.]+,[-+]?\d+,(WIN|LOSS|PUSH|REFUNDED|CASHED OUT)/', trim($line))) {
                     $csvLinesCount++;
                 }
             }
@@ -2461,10 +2643,16 @@ if ($_POST) {
             // Check if response appears truncated
             $responseEnds = trim(substr($chatResult['response'], -100));
             $appearsTruncated = !preg_match('/[.!?]$/', $responseEnds) && 
-                               !preg_match('/\d{4}-\d{2}-\d{2},[^,]*,[^,]*,[\d.]+,[-+]?\d+,(WIN|LOSS|PUSH|REFUNDED)$/', $responseEnds) &&
+                               !preg_match('/\d{4}-\d{2}-\d{2},[^,]*,[^,]*,[\d.]+,[-+]?\d+,(WIN|LOSS|PUSH|REFUNDED|CASHED OUT)$/', $responseEnds) &&
                                !strpos($responseEnds, 'CSV data') &&
                                !strpos($responseEnds, 'format');
             error_log("🔍 AI RESPONSE DEBUG - Appears truncated: " . ($appearsTruncated ? 'YES - LIKELY TRUNCATED' : 'NO - Appears complete'));
+            
+            // Auto-retry with batch processing if truncation is detected
+            if ($appearsTruncated) {
+                error_log("🔄 TRUNCATION DETECTED - Retrying with batch processing");
+                $chatResult = $tracker->chatWithLLMBatched($userMessage, $apiKey, $provider);
+            }
         }
         
         error_log("🔍 AI CHAT DEBUG - Full result summary: " . json_encode([
@@ -2689,7 +2877,13 @@ if (isset($_GET['added'])) {
     $message = "✅ Bet added successfully!";
 }
 if (isset($_GET['imported'])) {
-    $message = "✅ Bets imported successfully!";
+    // Check if we have import count in the URL
+    $importCount = isset($_GET['count']) ? intval($_GET['count']) : 'unknown';
+    if ($importCount === 0) {
+        $message = "⚠️ Import completed but 0 bets were added! Check your CSV format and AI response.";
+    } else {
+        $message = "✅ Successfully imported $importCount bet(s)!";
+    }
 }
 if (isset($_GET['cleared'])) {
     $message = "✅ All bets cleared successfully! Account reset to starting balance.";
@@ -2759,6 +2953,17 @@ if (isset($_POST['action']) && $_POST['action'] === 'import_csv_paste') {
         error_log("🔍 CSV IMPORT DEBUG - Setting batch size to process all $lineCount lines");
         $importResult = $importTracker->importCSVData($csvData, max($lineCount, 200), 0);
         
+        // 🔍 EMERGENCY DEBUG - Log detailed import results
+        error_log("🔍 IMPORT RESULT ANALYSIS: " . json_encode([
+            'success' => $importResult['success'] ?? 'missing',
+            'count' => $importResult['count'] ?? 'missing', 
+            'errors' => $importResult['errors'] ?? 'missing',
+            'error' => $importResult['error'] ?? 'missing',
+            'csv_lines' => substr_count($csvData, "\n"),
+            'csv_has_header' => strpos($csvData, 'Date,Sport') !== false,
+            'csv_sample' => substr($csvData, 0, 300)
+        ]));
+        
         if ($importResult['success'] && $importResult['count'] > 0) {
             $message = "✅ Successfully imported " . $importResult['count'] . " bets to account '$accountId'! New balance: $" . number_format($importResult['new_balance'], 2);
             if ($importResult['errors'] > 0) {
@@ -2773,13 +2978,14 @@ if (isset($_POST['action']) && $_POST['action'] === 'import_csv_paste') {
         }
     }
     
-    // Redirect to avoid resubmission
+    // Redirect to avoid resubmission with import count
+    $redirectCount = $importResult['count'] ?? 0;
     if (!headers_sent()) {
-        header("Location: " . $_SERVER['PHP_SELF'] . "?imported=1");
+        header("Location: " . $_SERVER['PHP_SELF'] . "?imported=1&count=" . $redirectCount);
         exit;
     } else {
-        // If headers already sent, use JavaScript redirect
-        echo "<script>window.location.href = '" . $_SERVER['PHP_SELF'] . "?imported=1';</script>";
+        // If headers already sent, use JavaScript redirect  
+        echo "<script>window.location.href = '" . $_SERVER['PHP_SELF'] . "?imported=1&count=" . $redirectCount . "';</script>";
         exit;
     }
 }
@@ -7187,17 +7393,29 @@ $needsSetup = false; // Multi-account system handles setup automatically
                     body: formData
                 });
                 
+                console.log('🔍 Response Status:', response.status, response.statusText);
+                console.log('🔍 Response Headers:', [...response.headers.entries()]);
+                
                 if (!response.ok) {
+                    const errorText = await response.text();
+                    console.log('🔍 Error Response:', errorText);
                     throw new Error(`HTTP ${response.status}: ${response.statusText}`);
                 }
                 
+                const responseText = await response.text();
+                console.log('🔍 Raw Response Length:', responseText.length);
+                console.log('🔍 Raw Response Preview:', responseText.substring(0, 500));
+                console.log('🔍 Raw Response End:', responseText.substring(responseText.length - 200));
+                
                 let result;
                 try {
-                    result = await response.json();
+                    result = JSON.parse(responseText);
+                    console.log('🔍 Parsed JSON Result:', result);
                 } catch (jsonError) {
+                    console.error('🔍 JSON Parse Error:', jsonError);
+                    console.log('🔍 Invalid JSON Response:', responseText);
                     throw new Error('Invalid response format from server');
                 }
-                console.log('Chat response:', result); // Debug log
                 
                 // Remove typing indicator
                 removeTypingIndicator();
@@ -7205,10 +7423,21 @@ $needsSetup = false; // Multi-account system handles setup automatically
                 if (result.success) {
                     addFloatingChatMessage(result.message, 'assistant');
                     
-                    // If response contains CSV data, add import button
-                    if (result.message.includes('Date,Sport,Selection,Stake,Odds,Result') || 
-                        result.message.match(/\d{4}-\d{2}-\d{2}.*,.*,.*,\d+.*,[-+]?\d+.*,(WIN|LOSS|PUSH)/)) {
+                    // 🔍 EMERGENCY DEBUG - Log what AI actually returned
+                    console.log('🔍 AI RESPONSE LENGTH:', result.message.length);
+                    console.log('🔍 AI RESPONSE SAMPLE:', result.message.substring(0, 500));
+                    console.log('🔍 CONTAINS CSV HEADER:', result.message.includes('Date,Sport,Selection'));
+                    console.log('🔍 CONTAINS 2023 DATES:', result.message.includes('2023-'));
+                    console.log('🔍 CSV LINES COUNT:', (result.message.match(/\n/g) || []).length);
+                    
+                    // If response contains CSV data, add import button (check both 6 and 7 column formats)
+                    if (result.message.includes('Date,Sport,Selection') || 
+                        result.message.includes('FULL_CSV_DATA:') ||
+                        result.message.match(/\d{4}-\d{2}-\d{2}.*,.*,.*,\d+.*,[-+]?\d+.*,(WIN|LOSS|PUSH|REFUNDED|CASHED OUT)/)) {
+                        console.log('🔍 CSV DETECTED - Adding import button');
                         addImportButton(result.message);
+                    } else {
+                        console.log('🔍 NO CSV DETECTED - No import button added');
                     }
                 } else {
                     // FIXED: Better error message handling - try message field first, then error
@@ -7270,26 +7499,52 @@ $needsSetup = false; // Multi-account system handles setup automatically
             const buttonDiv = document.createElement('div');
             buttonDiv.className = 'chat-message assistant-message import-action';
             
-            // Extract just the CSV data (look for lines that match CSV pattern)
-            const lines = csvData.split('\n');
-            const csvLines = lines.filter(line => 
-                line.includes('Date,Sport,Selection') || 
-                line.match(/\d{4}-\d{2}-\d{2}.*,.*,.*,\d+.*,[-+]?\d+.*,(WIN|LOSS|PUSH)/)
-            );
-            const cleanCsv = csvLines.join('\n');
+            // Check if this is batch processing with embedded full CSV data
+            let cleanCsv;
+            console.log('🔍 CSV extraction debug - Input data length:', csvData.length);
+            console.log('🔍 CSV extraction debug - Contains FULL_CSV_DATA:', csvData.includes('FULL_CSV_DATA:'));
+            
+            if (csvData.includes('FULL_CSV_DATA:')) {
+                // Extract full CSV from batch response
+                const fullDataStart = csvData.indexOf('FULL_CSV_DATA:') + 'FULL_CSV_DATA:'.length;
+                cleanCsv = csvData.substring(fullDataStart).trim();
+                console.log('🔍 Extracted full CSV data from batch response:', cleanCsv.length, 'chars');
+                console.log('🔍 First 200 chars of extracted CSV:', cleanCsv.substring(0, 200));
+            } else {
+                // Extract CSV data from regular response (fallback)
+                const lines = csvData.split('\n');
+                console.log('🔍 Regular extraction - Total lines:', lines.length);
+                const csvLines = lines.filter(line => 
+                    line.includes('Date,Sport,Selection') || 
+                    line.match(/\d{4}-\d{2}-\d{2}.*,.*,.*,\d+.*,[-+]?\d+.*,(WIN|LOSS|PUSH|REFUNDED|CASHED OUT)/)
+                );
+                cleanCsv = csvLines.join('\n');
+                console.log('🔍 Regular extraction - Filtered CSV lines:', csvLines.length);
+                console.log('🔍 First 200 chars of filtered CSV:', cleanCsv.substring(0, 200));
+            }
+            
+            // Store CSV data globally to avoid template literal issues
+            const csvId = 'csv_' + Date.now();
+            window.storedCsvData = window.storedCsvData || {};
+            window.storedCsvData[csvId] = cleanCsv;
+            
+            // Count the number of CSV data lines for display
+            const recordCount = cleanCsv.split('\n').filter(line => 
+                line.trim() && line.match(/\d{4}-\d{2}-\d{2}.*,.*,.*,\d+.*,[-+]?\d+.*,(WIN|LOSS|PUSH|REFUNDED|CASHED OUT)/)
+            ).length;
             
             buttonDiv.innerHTML = `
                 <div class="message-content import-action-content">
                     <div style="background: rgba(76,175,80,0.2); border: 1px solid #4CAF50; border-radius: 8px; padding: 12px; margin: 8px 0;">
                         <div style="color: #4CAF50; font-weight: bold; margin-bottom: 8px;">📥 Ready to Import</div>
                         <div style="font-size: 12px; color: #ccc; margin-bottom: 10px;">
-                            Found ${csvLines.length - 1} betting records ready for import
+                            Found ${recordCount} betting records ready for import
                         </div>
-                        <button onclick="importCsvFromChat(\`${cleanCsv.replace(/`/g, '\\`')}\`)" 
+                        <button onclick="importCsvFromChat('${csvId}')" 
                                 class="btn btn-success" style="padding: 6px 12px; font-size: 12px;">
                             📥 Import These Bets
                         </button>
-                        <button onclick="copyCsvToClipboard(\`${cleanCsv.replace(/`/g, '\\`')}\`)" 
+                        <button onclick="copyCsvToClipboard('${csvId}')" 
                                 class="btn" style="background: #2196F3; color: white; padding: 6px 12px; font-size: 12px; margin-left: 8px;">
                             📋 Copy CSV
                         </button>
@@ -7301,10 +7556,20 @@ $needsSetup = false; // Multi-account system handles setup automatically
             messagesArea.scrollTop = messagesArea.scrollHeight;
         }
         
-        function importCsvFromChat(csvData) {
+        function importCsvFromChat(csvId) {
+            // Get CSV data from storage
+            const csvData = window.storedCsvData && window.storedCsvData[csvId];
+            if (!csvData) {
+                console.error('CSV data not found for ID:', csvId);
+                console.log('Available stored CSV IDs:', Object.keys(window.storedCsvData || {}));
+                return;
+            }
+            
             // Debug logging
             console.log('🔍 Import Debug - Account ID from PHP:', '<?= htmlspecialchars($currentAccountId ?? '') ?>');
             console.log('🔍 Import Debug - CSV Data length:', csvData.length);
+            console.log('🔍 Import Debug - CSV Data preview:', csvData.substring(0, 300));
+            console.log('🔍 Import Debug - CSV Lines count:', csvData.split('\n').length);
             
             // Create a form and submit to import the CSV data
             const form = document.createElement('form');
@@ -7345,7 +7610,15 @@ $needsSetup = false; // Multi-account system handles setup automatically
             form.submit();
         }
         
-        function copyCsvToClipboard(csvData) {
+        function copyCsvToClipboard(csvId) {
+            // Get CSV data from storage
+            const csvData = window.storedCsvData && window.storedCsvData[csvId];
+            if (!csvData) {
+                console.error('CSV data not found for ID:', csvId);
+                addFloatingChatMessage('❌ CSV data not found', 'assistant');
+                return;
+            }
+            
             navigator.clipboard.writeText(csvData).then(() => {
                 addFloatingChatMessage('📋 CSV data copied to clipboard!', 'assistant');
             }).catch(() => {
