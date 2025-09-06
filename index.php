@@ -1320,12 +1320,18 @@ class PlayerProfitTracker {
      */
     public function deleteBet($betId) {
         try {
+            error_log("🗑️ DELETE BET DEBUG - Starting deletion for bet ID: " . $betId);
             $data = $this->loadData();
+            
+            $totalBetsBefore = count($data['bets']);
+            error_log("🗑️ DELETE BET DEBUG - Total bets before deletion: " . $totalBetsBefore);
             
             // Find and remove the bet
             $betFound = false;
+            $deletedBet = null;
             for ($i = 0; $i < count($data['bets']); $i++) {
                 if ($data['bets'][$i]['id'] === $betId) {
+                    $deletedBet = $data['bets'][$i]; // Store for logging
                     array_splice($data['bets'], $i, 1);
                     $betFound = true;
                     break;
@@ -1333,21 +1339,42 @@ class PlayerProfitTracker {
             }
             
             if (!$betFound) {
+                error_log("🗑️ DELETE BET ERROR - Bet ID not found: " . $betId);
                 return ['success' => false, 'error' => 'Bet not found'];
             }
             
+            $totalBetsAfter = count($data['bets']);
+            error_log("🗑️ DELETE BET DEBUG - Bet found and removed. Total bets after: " . $totalBetsAfter);
+            error_log("🗑️ DELETE BET DEBUG - Deleted bet details: " . json_encode([
+                'id' => $deletedBet['id'],
+                'date' => $deletedBet['date'],
+                'selection' => $deletedBet['selection'],
+                'stake' => $deletedBet['stake'],
+                'result' => $deletedBet['result']
+            ]));
+            
             // Recalculate all balances from scratch
+            $balanceBefore = $data['account_balance'];
             $this->recalculateAllBalances($data);
+            $balanceAfter = $data['account_balance'];
+            
+            error_log("🗑️ DELETE BET DEBUG - Balance before: $" . $balanceBefore . ", after: $" . $balanceAfter);
             
             $this->saveData($data);
+            error_log("🗑️ DELETE BET SUCCESS - Data saved successfully");
+            
+            // Recalculate statistics after saving
+            $this->recalculateStats();
+            error_log("🗑️ DELETE BET SUCCESS - Statistics recalculated");
             
             return [
                 'success' => true,
-                'new_balance' => $data['account_balance']
+                'new_balance' => $data['account_balance'],
+                'bets_remaining' => count($data['bets'])
             ];
             
         } catch (Exception $e) {
-            error_log("Delete bet error: " . $e->getMessage());
+            error_log("🗑️ DELETE BET ERROR - Exception: " . $e->getMessage());
             return ['success' => false, 'error' => 'Failed to delete bet: ' . $e->getMessage()];
         }
     }
@@ -1356,10 +1383,16 @@ class PlayerProfitTracker {
      * Recalculate all bet balances chronologically
      */
     private function recalculateAllBalances(&$data) {
-        // Sort bets by date and timestamp
+        // Sort bets by date and timestamp (handle missing timestamp gracefully)
         usort($data['bets'], function($a, $b) {
             $dateCompare = strcmp($a['date'], $b['date']);
-            return $dateCompare !== 0 ? $dateCompare : strcmp($a['timestamp'], $b['timestamp']);
+            if ($dateCompare !== 0) {
+                return $dateCompare;
+            }
+            // Use timestamp if available, otherwise use ID or 0
+            $timestampA = isset($a['timestamp']) ? $a['timestamp'] : (isset($a['id']) ? $a['id'] : '0');
+            $timestampB = isset($b['timestamp']) ? $b['timestamp'] : (isset($b['id']) ? $b['id'] : '0');
+            return strcmp($timestampA, $timestampB);
         });
         
         // Recalculate balances
@@ -1373,8 +1406,8 @@ class PlayerProfitTracker {
         // Update current balance
         $data['account_balance'] = $runningBalance;
         
-        // Update statistics
-        $this->updateStats($data);
+        // Update statistics (recalculateStats loads its own data, so call after saving)
+        // Note: Will be called after saveData() in the calling function
     }
     
     /**
@@ -1755,9 +1788,17 @@ OUTPUT (CSV only, no explanations):";
         "2. Extract odds from displayed odds in the betting data\n" .
         "3. Use American format (-110, +120, etc.)\n" .
         "4. If odds aren't clear, estimate from typical book odds\n\n" .
-        "EXAMPLE EXTRACTIONS:\n" .
+        "🎯 PARLAY DETECTION - CRITICAL:\n" .
+        "⚠️ MULTIPLE GAMES/SELECTIONS WITH SINGLE 'Total Pick' = ONE PARLAY BET!\n" .
+        "- If you see multiple games but only ONE 'Total Pick' amount → This is a PARLAY\n" .
+        "- Create EXACTLY ONE CSV line with Sport: Multi\n" .
+        "- Calculate parlay odds from profit: (profit ÷ stake) ratio\n\n" .
+        "PARLAY EXAMPLES:\n" .
+        "- Cubs ML + Mahomes Over 14.5, $50.29 bet, $73.04 profit → +145 odds\n" .
+        "- 3-team parlay, $100 bet, $250 profit → +250 odds\n" .
+        "- Format: 2023-09-05,Multi,Cubs ML + Mahomes Over 14.5 parlay,50.29,+145,WIN\n\n" .
+        "SINGLE BET EXAMPLES:\n" .
         "- \"Total Pick: 1000.00\" with typical MLB bet → -110 or -120 odds\n" .
-        "- Parlay with multiple legs → higher positive odds like +255, +180\n" .
         "- Favorites → negative odds like -140, -155\n" .
         "- Underdogs → positive odds like +120, +180\n\n" .
         "Output Examples:\n" .
@@ -1822,10 +1863,18 @@ OUTPUT (CSV only, no explanations):";
         "- Odds: American format from displayed odds (e.g., -140, +255)\n" .
         "- Result: EXACTLY one of: WIN, LOSS, PUSH, REFUNDED, CASHED OUT\n\n" .
         
-        "🎯 PARLAY DETECTION:\n" .
-        "- Multiple selections in one bet → Sport: Multi, Selection: describe parlay\n" .
-        "- Example: 'Detroit Tigers -1.5 + Chicago White Sox Over 2.5' → Multi,'Detroit Tigers + White Sox parlay'\n" .
-        "- Parlay odds: Calculate from profit ratio (often high like +264, +132)\n\n" .
+        "🎯 PARLAY DETECTION - CRITICAL:\n" .
+        "⚠️ MULTIPLE GAMES/SELECTIONS WITH SINGLE 'Total Pick' = ONE PARLAY BET!\n" .
+        "- If you see multiple games but only ONE 'Total Pick' amount → This is a PARLAY\n" .
+        "- Create EXACTLY ONE CSV line with Sport: Multi\n" .
+        "- Calculate parlay odds from profit: (profit ÷ stake) ratio\n" .
+        "- Example: Cubs ML + Mahomes Over 14.5, $50.29 bet, $73.04 profit → +145 odds\n\n" .
+        "PARLAY FORMAT:\n" .
+        "- Sport: Multi\n" .
+        "- Selection: 'Cubs ML + Mahomes Over 14.5 parlay' (brief description)\n" .
+        "- Stake: The single 'Total Pick' amount\n" .
+        "- Odds: Calculate from profit ratio\n" .
+        "- Result: WIN/LOSS based on outcome\n\n" .
         
         "PROFIT EXTRACTION EXAMPLES:\n" .
         "\"Total Pick: 1000.00, Profit: 714.29\" → CSV: ...,1000.00,-140,WIN,714.29\n" .
@@ -2710,14 +2759,31 @@ if ($_POST) {
         
         $deleteResult = $tracker->deleteBet($betId);
         
-        if ($deleteResult['success']) {
-            $message = "✅ Bet deleted successfully! New balance: $" . number_format($deleteResult['new_balance'], 2);
-        } else {
-            $message = "❌ Failed to delete bet: " . $deleteResult['error'];
-        }
+        // Check if this is an AJAX request (from JavaScript)
+        $isAjax = !empty($_SERVER['HTTP_X_REQUESTED_WITH']) && 
+                  strtolower($_SERVER['HTTP_X_REQUESTED_WITH']) == 'xmlhttprequest';
         
-        header("Location: " . $_SERVER['PHP_SELF'] . "?deleted=1");
-        exit;
+        if ($isAjax) {
+            // Return JSON response for AJAX requests
+            // Clean any output buffer to prevent HTML errors from corrupting JSON
+            while (ob_get_level()) {
+                ob_end_clean();
+            }
+            
+            header('Content-Type: application/json');
+            echo json_encode($deleteResult);
+            exit;
+        } else {
+            // Handle regular form submission with redirect
+            if ($deleteResult['success']) {
+                $message = "✅ Bet deleted successfully! New balance: $" . number_format($deleteResult['new_balance'], 2);
+            } else {
+                $message = "❌ Failed to delete bet: " . $deleteResult['error'];
+            }
+            
+            header("Location: " . $_SERVER['PHP_SELF'] . "?deleted=1");
+            exit;
+        }
     }
     
     // Handle Clear All Bets (admin function)
@@ -4716,20 +4782,35 @@ $needsSetup = false; // Multi-account system handles setup automatically
                 
                 fetch('', {
                     method: 'POST',
+                    headers: {
+                        'X-Requested-With': 'XMLHttpRequest'
+                    },
                     body: formData
                 })
                 .then(response => {
                     if (!response.ok) {
                         throw new Error(`HTTP ${response.status}: ${response.statusText}`);
                     }
-                    return response.text();
+                    return response.text(); // Get raw text first for debugging
                 })
                 .then(responseText => {
-                    // Check if response contains error message
-                    if (responseText.includes('❌')) {
-                        alert('Delete failed: ' + responseText.match(/❌[^<]*/)?.[0] || 'Unknown error');
-                    } else {
-                        location.reload(); // Refresh to show updated bet list
+                    // Log raw response for debugging
+                    console.log('🗑️ Delete response:', responseText);
+                    
+                    try {
+                        const result = JSON.parse(responseText);
+                        if (result.success) {
+                            // Show success message with new balance
+                            alert('✅ Bet deleted successfully! New balance: $' + (result.new_balance ? result.new_balance.toLocaleString() : 'N/A'));
+                            location.reload(); // Refresh to show updated bet list
+                        } else {
+                            alert('❌ Delete failed: ' + (result.error || 'Unknown error'));
+                        }
+                    } catch (jsonError) {
+                        // If JSON parsing fails, show the raw response for debugging
+                        console.error('🗑️ JSON parse error:', jsonError);
+                        console.error('🗑️ Raw response:', responseText);
+                        alert('❌ Server error - check console for details. Raw response: ' + responseText.substring(0, 200) + '...');
                     }
                 })
                 .catch(error => {
