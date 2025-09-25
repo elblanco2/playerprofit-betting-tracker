@@ -2,6 +2,19 @@
 ob_start(); // Start output buffering to prevent header issues
 session_start();
 
+// 🔍 DEBUG: Log all POST requests
+if ($_POST) {
+    $debugData = [
+        'timestamp' => date('Y-m-d H:i:s'),
+        'action' => $_POST['action'] ?? 'no-action',
+        'post_keys' => array_keys($_POST),
+        'csv_data_length' => isset($_POST['csv_data']) ? strlen($_POST['csv_data']) : 0
+    ];
+    // Write to both locations
+    file_put_contents('/tmp/playerprofit_debug.log', "🔍 POST REQUEST: " . json_encode($debugData) . "\n", FILE_APPEND);
+    file_put_contents(__DIR__ . '/import_debug.log', date('Y-m-d H:i:s') . " - POST REQUEST: " . json_encode($debugData) . "\n", FILE_APPEND);
+}
+
 // Include the secure API key manager
 require_once __DIR__ . '/includes/ApiKeyManager.php';
 
@@ -880,7 +893,11 @@ class PlayerProfitTracker {
      * Import bets from CSV data
      */
     public function importCSVData($csvContent, $batchSize = 50, $startLine = 0) {
+        // 🔍 CRITICAL DEBUG - Method entry point
+        file_put_contents('/tmp/playerprofit_debug.log', "🔍 IMPORT METHOD CALLED: " . date('Y-m-d H:i:s') . " - CSV length: " . strlen($csvContent) . " bytes\n", FILE_APPEND);
+        
         if (empty($csvContent)) {
+            file_put_contents('/tmp/playerprofit_debug.log', "❌ CSV DATA IS EMPTY\n", FILE_APPEND);
             return ['success' => false, 'error' => 'CSV data is empty'];
         }
         
@@ -929,19 +946,50 @@ class PlayerProfitTracker {
             $oddsRaw = trim($fields[4]);
             $result = strtoupper(trim($fields[5]));
             
+            // 🔍 DEBUG: Log first few failed bets for analysis
+            if ($lineNum < 3) {
+                file_put_contents('/tmp/playerprofit_debug.log', "🔍 CSV PARSING DEBUG Line " . ($lineNum + 1) . ": " . json_encode([
+                    'raw_line' => $line,
+                    'field_count' => count($fields),
+                    'date' => $date,
+                    'sport' => $sport,
+                    'selection' => $selection,
+                    'stake_raw' => $stakeRaw,
+                    'odds_raw' => $oddsRaw,
+                    'result' => $result
+                ]) . "\n", FILE_APPEND);
+            }
+            
             // Note: No longer extracting profit column - let import system calculate profit
             
             // Advanced stake parsing
             $stake = floatval(str_replace(['$', ',', '+'], '', $stakeRaw));
             
-            // Advanced odds parsing (handle both +/- American odds)
+            // Enhanced odds parsing to handle multiple formats
             $odds = 0;
-            $cleanOdds = str_replace(['+', ' '], '', $oddsRaw); // Remove + and spaces
+            $cleanOdds = str_replace(['+', ' ', '.00'], '', $oddsRaw); // Remove +, spaces, and .00
+            
             if (is_numeric($cleanOdds)) {
                 $odds = intval($cleanOdds);
-                // If original had no sign and is positive, make it positive American odds
-                if ($odds > 0 && strpos($oddsRaw, '-') !== 0) {
-                    $odds = abs($odds); // Ensure positive
+                
+                // Handle negative odds
+                if (strpos($oddsRaw, '-') === 0) {
+                    $odds = -abs($odds);
+                } 
+                // Handle positive odds (missing + sign or decimal format)
+                else if ($odds > 0) {
+                    // Convert decimal odds > 100 to American format
+                    if ($odds > 100 && !strpos($oddsRaw, '.')) {
+                        // Assume it's already American positive odds
+                        $odds = abs($odds);
+                    } else {
+                        $odds = abs($odds);
+                    }
+                }
+                
+                // Debug first few odds conversions
+                if ($lineNum < 5) {
+                    file_put_contents('/tmp/playerprofit_debug.log', "🔍 ODDS PARSING Line " . ($lineNum + 1) . ": '$oddsRaw' → $odds\n", FILE_APPEND);
                 }
             } else {
                 $errors++;
@@ -952,7 +1000,23 @@ class PlayerProfitTracker {
             // Enhanced validation - allow odds of 0 (some books use 0 for even money)
             if (empty($date) || empty($sport) || empty($selection) || $stake <= 0) {
                 $errors++;
-                $errorMessages[] = "Line " . ($lineNum + 1) . ": Missing or invalid required fields (date='$date', stake=$stake, odds=$odds)";
+                $errorMessages[] = "Line " . ($lineNum + 1) . ": Missing or invalid required fields (date='$date', sport='$sport', selection='$selection', stake=$stake, odds=$odds)";
+                
+                // Debug first few validation failures
+                if ($errors <= 5) {
+                    file_put_contents('/tmp/playerprofit_debug.log', "❌ VALIDATION FAILED Line " . ($lineNum + 1) . ": " . json_encode([
+                        'date' => $date,
+                        'sport' => $sport,
+                        'selection' => $selection,
+                        'stake' => $stake,
+                        'odds' => $odds,
+                        'result' => $result,
+                        'empty_date' => empty($date),
+                        'empty_sport' => empty($sport),
+                        'empty_selection' => empty($selection),
+                        'invalid_stake' => $stake <= 0
+                    ]) . "\n", FILE_APPEND);
+                }
                 continue;
             }
             
@@ -1093,13 +1157,20 @@ class PlayerProfitTracker {
                 );
                 
                 // 🔍 DIAGNOSTIC LOGGING - Check calculation path used
-                error_log("🔍 CALCULATION PATH: " . json_encode([
+                $diagnosticInfo = [
                     'selection' => $bet['selection'],
                     'used_exactProfit' => isset($bet['exactProfit']),
                     'input_profit' => $bet['exactProfit'] ?? 'calculated',
                     'result_pnl' => $addResult['pnl'] ?? 'unknown',
-                    'success' => $addResult['success'] ?? false
-                ]));
+                    'success' => $addResult['success'] ?? false,
+                    'error' => $addResult['error'] ?? 'none'
+                ];
+                error_log("🔍 CALCULATION PATH: " . json_encode($diagnosticInfo));
+                
+                // Add to visible debug file
+                if ($errors + $imported < 5) { // Only log first few for debugging
+                    file_put_contents('/tmp/playerprofit_debug.log', "🔍 ADDBET RESULT: " . json_encode($diagnosticInfo) . "\n", FILE_APPEND);
+                }
                 
                 if ($addResult['success']) {
                     $imported++;
@@ -1111,16 +1182,14 @@ class PlayerProfitTracker {
                     
                     // 🔍 DETAILED addBet failure analysis
                     error_log("❌ IMPORT FAILED: " . $bet['selection'] . " - Error: " . $errorMessage);
-                    error_log("🔍 addBet FAILURE DETAILS: " . json_encode([
-                        'date' => $bet['date'],
-                        'sport' => $bet['sport'], 
+                    file_put_contents('/tmp/playerprofit_debug.log', "❌ ADDBET FAILED: " . json_encode([
+                        'line' => $bet['line'],
                         'selection' => $bet['selection'],
+                        'error' => $errorMessage,
                         'stake' => $bet['stake'],
                         'odds' => $bet['odds'],
-                        'result' => $bet['result'],
-                        'line' => $bet['line'],
-                        'full_addResult' => $addResult
-                    ]));
+                        'result' => $bet['result']
+                    ]) . "\n", FILE_APPEND);
                 }
             } catch (Exception $e) {
                 $errors++;
@@ -1782,7 +1851,7 @@ OUTPUT (CSV only, no explanations):";
         error_log("🔍 BATCHING DECISION: Length=" . strlen($userMessage) . ", Indicators=" . $indicatorCount . " -> " . (strlen($userMessage) > 3000 && $indicatorCount > 5 ? "BATCH" : "SINGLE"));
 
         // Build conversation prompt for chat context
-        $systemPrompt = "You are an expert betting data analyst helping users format their PlayerProfit betting history. Your job is to:\n\n1. Convert betting data to standard CSV format: Date,Sport,Selection,Stake,Odds,Result\n2. Let the import system calculate profits based on odds and results\n3. Focus on extracting accurate stakes and odds\n4. Ensure all bet types are properly categorized\n\n⚠️ CRITICAL: PROCESS EVERY SINGLE BET - NO EXCEPTIONS!\n- NEVER skip any bets, regardless of format issues\n- NEVER truncate your output due to length\n- NEVER abbreviate or summarize bet data\n- COUNT your output lines and ensure they match the input bet count\n- ALWAYS finish processing the complete dataset\n\n🚨 HANDLE ALL RESULT TYPES - CRITICAL FOR ACCURACY:\n- Won → Result: WIN\n- Lost → Result: LOSS\n- Refunded → Result: REFUNDED (stake returned, must be included!)\n- Cashed Out → Result: CASHED OUT\n- Push/Tie → Result: PUSH\n\n🎯 STANDARD CSV FORMAT (6 fields):\n- Date: YYYY-MM-DD format\n- Sport: NFL, NBA, MLB, NHL, Tennis, Soccer, Multi (for parlays), etc.\n- Selection: Team name + bet type (e.g., 'Patriots ML', 'Lakers +5.5', 'Detroit Tigers + White Sox parlay')\n- Stake: Numeric value from \"Total Pick\" field\n- Odds: American format from displayed odds (-110, +120, etc.)\n- Result: WIN, LOSS, PUSH, REFUNDED, or CASHED OUT\n\n" .
+        $systemPrompt = "You are an expert betting data analyst helping users format their PlayerProfit betting history. Your job is to:\n\n1. Convert betting data to standard CSV format: Date,Sport,Selection,Stake,Odds,Result\n2. Let the import system calculate profits based on odds and results\n3. Focus on extracting accurate stakes and odds\n4. Ensure all bet types are properly categorized\n\n⚠️ CRITICAL: PROCESS EVERY SINGLE BET - NO EXCEPTIONS!\n- NEVER skip any bets, regardless of format issues\n- NEVER truncate your output due to length\n- NEVER abbreviate or summarize bet data\n- COUNT your output lines and ensure they match the input bet count\n- ALWAYS finish processing the complete dataset\n\n🚨 HANDLE ALL RESULT TYPES - CRITICAL FOR ACCURACY:\n- Won → Result: WIN\n- Lost → Result: LOSS\n- Refunded → Result: REFUNDED (stake returned, must be included!)\n- Cashed Out → Result: CASHED OUT\n- Push/Tie → Result: PUSH\n\n🎯 STANDARD CSV FORMAT (EXACTLY 6 COLUMNS - NO PROFIT COLUMN!):\n- Date: YYYY-MM-DD format\n- Sport: NFL, NBA, MLB, NHL, Tennis, Soccer, Multi (for parlays), etc.\n- Selection: Team name + bet type (e.g., 'Patriots ML', 'Lakers +5.5', 'Detroit Tigers + White Sox parlay')\n- Stake: Numeric value from \"Total Pick\" field\n- Odds: American format from displayed odds (-110, +120, etc.)\n- Result: WIN, LOSS, PUSH, REFUNDED, or CASHED OUT\n\n⚠️ DO NOT ADD PROFIT COLUMN! The system calculates profits automatically from odds and results.\n\n" .
         "ODDS EXTRACTION:\n" .
         "1. Extract stake from \"Total Pick\" field\n" .
         "2. Extract odds from displayed odds in the betting data\n" .
@@ -2992,6 +3061,16 @@ if (!$showSetupWizard && !$showAccountCreated) {
 
 // Handle CSV Import (Paste Method)
 if (isset($_POST['action']) && $_POST['action'] === 'import_csv_paste') {
+    // 🔍 IMMEDIATE DEBUG - Handler reached
+    file_put_contents(__DIR__ . '/import_debug.log', date('Y-m-d H:i:s') . " - CSV PASTE HANDLER REACHED\n", FILE_APPEND);
+    
+    // 🔍 CRITICAL DEBUG - Capture raw CSV data to see what we're actually processing
+    $debugFile = __DIR__ . '/csv_debug_' . date('His') . '.txt';
+    file_put_contents($debugFile, "=== CSV DEBUG DUMP " . date('Y-m-d H:i:s') . " ===\n");
+    file_put_contents($debugFile, "CSV Data Length: " . strlen($_POST['csv_data']) . " characters\n", FILE_APPEND);
+    file_put_contents($debugFile, "Account ID: " . $_POST['account_id'] . "\n", FILE_APPEND);
+    file_put_contents($debugFile, "Raw CSV Data:\n" . $_POST['csv_data'] . "\n", FILE_APPEND);
+    
     // Debug PHP limits and input size
     error_log("🔍 PHP LIMITS DEBUG - post_max_size: " . ini_get('post_max_size'));
     error_log("🔍 PHP LIMITS DEBUG - memory_limit: " . ini_get('memory_limit'));
@@ -3006,10 +3085,22 @@ if (isset($_POST['action']) && $_POST['action'] === 'import_csv_paste') {
     error_log("🔍 CSV IMPORT DEBUG - CSV line count: " . substr_count($csvData, "\n"));
     error_log("🔍 CSV IMPORT DEBUG - Account ID: " . $accountId);
     
-    // Check if it's a large import that should use batch processing
+    // Debug the CSV content to file
+    file_put_contents('/tmp/playerprofit_debug.log', "=== CSV PASTE IMPORT " . date('Y-m-d H:i:s') . " ===\n", FILE_APPEND);
+    file_put_contents('/tmp/playerprofit_debug.log', "CSV Length: " . strlen($csvData) . " chars\n", FILE_APPEND);
+    file_put_contents('/tmp/playerprofit_debug.log', "Line Count: " . substr_count($csvData, "\n") . "\n", FILE_APPEND);
+    file_put_contents('/tmp/playerprofit_debug.log', "Account ID: " . $accountId . "\n", FILE_APPEND);
+    file_put_contents('/tmp/playerprofit_debug.log', "First 500 chars:\n" . substr($csvData, 0, 500) . "\n\n", FILE_APPEND);
+    
+    // Check if it's a large import that should use batch processing  
     $lines = explode("\n", trim($csvData));
-    if (count($lines) > 100) {
+    file_put_contents('/tmp/playerprofit_debug.log', "🔍 CSV LINES COUNT: " . count($lines) . " lines detected\n", FILE_APPEND);
+    
+    // 🔍 CRITICAL FIX: Process ALL imports through PHP, not JavaScript batch processing
+    // The JavaScript batch processing may be broken - let's process everything in PHP
+    if (false) { // Disabled JavaScript batch processing
         // For large imports, use JavaScript batch processing
+        file_put_contents('/tmp/playerprofit_debug.log', "🔍 LARGE IMPORT DETECTED: " . count($lines) . " lines - Using JavaScript batch processing\n", FILE_APPEND);
         echo "<script>window.startBatchImport(`" . addslashes($csvData) . "`);</script>";
         $message = "⏳ Large CSV detected (" . count($lines) . " lines). Processing in batches...";
     } else {
@@ -3020,15 +3111,29 @@ if (isset($_POST['action']) && $_POST['action'] === 'import_csv_paste') {
         $importResult = $importTracker->importCSVData($csvData, max($lineCount, 200), 0);
         
         // 🔍 EMERGENCY DEBUG - Log detailed import results
-        error_log("🔍 IMPORT RESULT ANALYSIS: " . json_encode([
+        $debugInfo = [
+            'timestamp' => date('Y-m-d H:i:s'),
             'success' => $importResult['success'] ?? 'missing',
             'count' => $importResult['count'] ?? 'missing', 
             'errors' => $importResult['errors'] ?? 'missing',
             'error' => $importResult['error'] ?? 'missing',
             'csv_lines' => substr_count($csvData, "\n"),
             'csv_has_header' => strpos($csvData, 'Date,Sport') !== false,
-            'csv_sample' => substr($csvData, 0, 300)
-        ]));
+            'csv_sample' => substr($csvData, 0, 500),
+            'csv_data_length' => strlen($csvData)
+        ];
+        error_log("🔍 IMPORT RESULT ANALYSIS: " . json_encode($debugInfo));
+        
+        // Try multiple debug locations
+        file_put_contents('/tmp/playerprofit_debug.log', "=== IMPORT DEBUG " . date('Y-m-d H:i:s') . " ===\n" . print_r($debugInfo, true) . "\n", FILE_APPEND);
+        file_put_contents(__DIR__ . '/debug_import.log', "=== IMPORT DEBUG " . date('Y-m-d H:i:s') . " ===\n" . print_r($debugInfo, true) . "\n", FILE_APPEND);
+        
+        // Also add the message to show in the UI temporarily
+        if ($importResult['count'] == 0) {
+            $csvLines = explode("\n", $csvData);
+            $firstFewLines = array_slice($csvLines, 0, 5);
+            $message .= "\n🔍 DEBUG: CSV preview: " . implode(" | ", $firstFewLines);
+        }
         
         if ($importResult['success'] && $importResult['count'] > 0) {
             $message = "✅ Successfully imported " . $importResult['count'] . " bets to account '$accountId'! New balance: $" . number_format($importResult['new_balance'], 2);
