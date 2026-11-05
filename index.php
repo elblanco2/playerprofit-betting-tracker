@@ -81,6 +81,39 @@ class PlayerProfitTracker {
         //   L1 0.1x · L2 2x · L3 10x (redemptions unlock) · L4 50x
         //   On the 25k ($499.99 entry): $50 / $1,000 / $5,000 / $24,999.50.
         //   ⚠ INFERRED, not quoted — confirm with support before relying on it.
+        // ── LEGACY tiers, read from Lucas's own dashboards 2026-11-05 ──────────
+        // ⚠ THE RULES SPLIT BY ACCOUNT AGE, NOT BY PRODUCT NAME. A 'Pro' bought
+        // earlier carries 15% drawdown, a daily loss limit, a +20% target and a
+        // 2% minimum stake; today's Pro carries 10%, no daily limit, +15% and 1%.
+        // Four dashboards, two rule sets. This is why rules live on the ACCOUNT.
+        'Pro (legacy)' => [
+            'label'            => 'Pro (legacy)',
+            'legacy'           => true,
+            'entry_price'      => null,
+            'rounds'           => 2,
+            'profit_target_pct'=> 0.20,   // dashboard: 50k Pro target $60,000
+            'picks_required'   => 20,     // dashboard: "114 / 20  Complete"
+            'live_picks'       => true,
+            'min_percentage'   => 2.0,    // ⚠ 2% FORCED MINIMUM on legacy Pro
+            'max_percentage'   => 10.0,
+            'drawdown_pct'     => 0.15,   // dashboard: limit $8,126.67 = 15% of peak
+            'daily_loss_pct'   => 0.10,   // dashboard: $5,000 = 10% of STARTING size
+            'daily_loss_basis' => 'account_size',
+        ],
+        'Standard (legacy)' => [
+            'label'            => 'Standard (legacy)',
+            'legacy'           => true,
+            'entry_price'      => null,
+            'rounds'           => 2,
+            'profit_target_pct'=> 0.20,   // dashboard: 10k Standard target $12,000
+            'picks_required'   => 20,     // dashboard: "227 / 20  Complete"
+            'live_picks'       => false,
+            'min_percentage'   => 1.0,
+            'max_percentage'   => 5.0,
+            'drawdown_pct'     => 0.15,   // dashboard: limit $1,675.44 = 15% of peak
+            'daily_loss_pct'   => 0.10,   // dashboard: $1,000 = 10% of STARTING size
+            'daily_loss_basis' => 'account_size',
+        ],
         'Profit' => [
             'label'            => 'Profit (legacy)',
             'legacy'           => true,
@@ -160,6 +193,13 @@ class PlayerProfitTracker {
             'live_picks'        => $config['live_picks']        ?? $base['live_picks'],
             'min_percentage'    => $config['risk_min_pct']      ?? $base['min_percentage'],
             'max_percentage'    => $config['risk_max_pct']      ?? $base['max_percentage'],
+            // ⚠ Playvo FORCES the minimum — you cannot stake under it to survive
+            // longer. On a thin account that removes the usual lever entirely.
+            'min_stake_forced'  => true,
+            'drawdown_pct'      => $config['drawdown_pct']   ?? $base['drawdown_pct']   ?? self::MAX_DRAWDOWN_PCT,
+            'daily_loss_pct'    => $config['daily_loss_pct'] ?? $base['daily_loss_pct'] ?? null,
+            'daily_loss_basis'  => $base['daily_loss_basis'] ?? 'account_size',
+            'legacy'            => $base['legacy'] ?? false,
         ];
     }
 
@@ -177,6 +217,9 @@ class PlayerProfitTracker {
     // Previously this file carried 15% in four places (two as *0.85, two as *0.15)
     // and the UI anchored its display to account_size while the violation check
     // anchored to highest_balance. Both are fixed; keep them derived from here.
+    // ⚠ DEFAULTS FOR CURRENT ACCOUNTS ONLY. Legacy tiers override these per type
+    // (15% drawdown, a real daily loss limit). Never read these directly for an
+    // account — call getRules()/drawdownStatus($cfg) so the account's own values win.
     const MAX_DRAWDOWN_PCT    = 0.10;   // of HIGHEST balance (trailing)
     // ⛔ NO DAILY LOSS LIMIT EXISTS ON PLAYVO. Settled 2026-11-05 from TWO live
     // dashboards of DIFFERENT types (1k Bankroll Pro, 25k Profit): the "Limits"
@@ -194,9 +237,12 @@ class PlayerProfitTracker {
      * The one drawdown calculation. Every check and every display must call this
      * so they cannot drift apart again.
      */
-    public function drawdownStatus($currentBalance, $highestBalance) {
+    public function drawdownStatus($currentBalance, $highestBalance, $pct = null) {
+        // $pct comes from the ACCOUNT's rules (legacy tiers are 15%, current 10%).
+        // Falls back to the current-account default only when none is supplied.
+        $pct = $pct ?? self::MAX_DRAWDOWN_PCT;
         $highestBalance = $highestBalance ?: $currentBalance;
-        $limit     = $highestBalance * self::MAX_DRAWDOWN_PCT;   // dollars allowed below peak
+        $limit     = $highestBalance * $pct;                     // dollars allowed below peak
         $floor     = $highestBalance - $limit;                    // balance that fails the account
         $used      = max(0, $highestBalance - $currentBalance);   // how far below peak we are
         return [
@@ -207,6 +253,7 @@ class PlayerProfitTracker {
             'distance_to_breach'  => max(0, $currentBalance - $floor),
             'pct_used'            => $limit > 0 ? ($used / $limit) * 100 : 0,
             'breached'            => $used >= $limit,
+            'drawdown_pct'        => $pct,
         ];
     }
     
@@ -744,9 +791,15 @@ class PlayerProfitTracker {
         // still computed and shown — their dashboard has a daily calendar too —
         // but it is NOT a violation. Previously this fired at 10% of account size
         // and would have reported a rule that does not exist.
+        $rulesForChecks = $this->getRules($config);
+        // ⚠ The daily loss limit EXISTS on legacy accounts (10k Standard $1,000,
+        // 50k Pro $5,000 — both 10% of STARTING size) and does NOT exist on
+        // current ones. Commit 663d8a8 removed it globally after reading only two
+        // dashboards, both of which happened to be current accounts. Per-account.
         $todayPnL = $this->getDailyPnL(date('Y-m-d'));
-        $dailyLossLimit = self::DAILY_LOSS_APPLIES ? $config['account_size'] * self::DAILY_LOSS_PCT : 0;
-        if (self::DAILY_LOSS_APPLIES && abs($todayPnL) > $dailyLossLimit && $todayPnL < 0) {
+        $dlPct = $rulesForChecks['daily_loss_pct'] ?? null;
+        $dailyLossLimit = $dlPct ? $config['account_size'] * $dlPct : 0;
+        if ($dlPct && abs($todayPnL) > $dailyLossLimit && $todayPnL < 0) {
             $violations[] = [
                 'type' => 'daily_loss',
                 'message' => "Daily loss limit exceeded: $" . number_format(abs($todayPnL), 2) . " / $" . number_format($dailyLossLimit, 2),
@@ -756,7 +809,7 @@ class PlayerProfitTracker {
         
         // Check max drawdown (Playvo: 10% below the highest balance ever reached)
         $maxDrawdown = $this->getMaxDrawdown();
-        $drawdownLimit = $config['highest_balance'] * self::MAX_DRAWDOWN_PCT;
+        $drawdownLimit = $config['highest_balance'] * ($rulesForChecks['drawdown_pct'] ?? self::MAX_DRAWDOWN_PCT);
         if ($maxDrawdown > $drawdownLimit) {
             $violations[] = [
                 'type' => 'max_drawdown',
@@ -911,9 +964,22 @@ class PlayerProfitTracker {
             'days_since_activity' => $daysSinceActivity,
             'risk_limits' => $riskLimits,
             'drawdown_protected' => $riskLimits['drawdown_protected'],
-            'drawdown' => $this->drawdownStatus($currentBalance, $config['highest_balance']),
-            'daily_loss_applies' => self::DAILY_LOSS_APPLIES,
-            'daily_loss_limit' => self::DAILY_LOSS_APPLIES ? $config['account_size'] * self::DAILY_LOSS_PCT : null,
+            'drawdown' => $this->drawdownStatus($currentBalance, $config['highest_balance'],
+                                                $statusRules['drawdown_pct'] ?? null),
+            'daily_loss_applies' => ($statusRules['daily_loss_pct'] ?? null) !== null,
+            'daily_loss_limit' => ($statusRules['daily_loss_pct'] ?? null)
+                ? $config['account_size'] * $statusRules['daily_loss_pct'] : null,
+            // ⚠ Playvo forces the minimum stake, so "bet smaller to last longer"
+            // is NOT available. bets_remaining is the honest cushion measure:
+            // a 50k legacy Pro with $1,548 of room and a $1,000 forced minimum is
+            // ONE loss from having no legal bet left, which a dollar figure hides.
+            'min_stake' => $config['account_size'] * ($statusRules['min_percentage'] ?? 1.0) / 100,
+            'bets_remaining' => (function($d, $m) {
+                return $m > 0 ? floor($d / $m) : null;
+            })($this->drawdownStatus($currentBalance, $config['highest_balance'],
+                                     $statusRules['drawdown_pct'] ?? null)['distance_to_breach'],
+               $config['account_size'] * ($statusRules['min_percentage'] ?? 1.0) / 100),
+            'legacy' => $statusRules['legacy'] ?? false,
             'balance_from_peak_pct' => (($currentBalance / $config['highest_balance']) * 100) - 100
         ];
     }
