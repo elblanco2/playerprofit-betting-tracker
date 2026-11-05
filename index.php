@@ -969,16 +969,31 @@ class PlayerProfitTracker {
             'daily_loss_applies' => ($statusRules['daily_loss_pct'] ?? null) !== null,
             'daily_loss_limit' => ($statusRules['daily_loss_pct'] ?? null)
                 ? $config['account_size'] * $statusRules['daily_loss_pct'] : null,
-            // ⚠ Playvo forces the minimum stake, so "bet smaller to last longer"
-            // is NOT available. bets_remaining is the honest cushion measure:
-            // a 50k legacy Pro with $1,548 of room and a $1,000 forced minimum is
-            // ONE loss from having no legal bet left, which a dollar figure hides.
+            // ⚠ Playvo FORCES the minimum stake, so "bet smaller to last longer"
+            // is not available and remaining DOLLARS overstates the cushion.
+            //
+            // ⚠ ...BUT THE SITE ALLOWS ONE FINAL BET BELOW THE MINIMUM (Luca,
+            // 2026-11-05). So the count is floor(room/min) PLUS one, whenever a
+            // remainder is left. A 50k legacy Pro with $1,548 of room and a
+            // $1,000 minimum has TWO bets: $1,000, then the $548 remainder.
+            // Counting only full-size bets understated it by one.
             'min_stake' => $config['account_size'] * ($statusRules['min_percentage'] ?? 1.0) / 100,
+            'max_stake' => $config['account_size'] * ($statusRules['max_percentage'] ?? 5.0) / 100,
             'bets_remaining' => (function($d, $m) {
-                return $m > 0 ? floor($d / $m) : null;
+                if ($m <= 0) return null;
+                $full = floor($d / $m);
+                return $full + (($d - $full * $m) > 0.005 ? 1 : 0);  // + the final short bet
             })($this->drawdownStatus($currentBalance, $config['highest_balance'],
                                      $statusRules['drawdown_pct'] ?? null)['distance_to_breach'],
                $config['account_size'] * ($statusRules['min_percentage'] ?? 1.0) / 100),
+            // On a FINAL bet the downside is fixed — the account ends on a loss
+            // whatever the stake — so stake is free upside. The useful ceiling is
+            // the remaining ROOM, not the table max: staking past the room cannot
+            // lose more, it just idles capital. Capped by the house max.
+            'last_bet_useful_max' => min(
+                $this->drawdownStatus($currentBalance, $config['highest_balance'],
+                                      $statusRules['drawdown_pct'] ?? null)['distance_to_breach'],
+                $config['account_size'] * ($statusRules['max_percentage'] ?? 5.0) / 100),
             'legacy' => $statusRules['legacy'] ?? false,
             'balance_from_peak_pct' => (($currentBalance / $config['highest_balance']) * 100) - 100
         ];
