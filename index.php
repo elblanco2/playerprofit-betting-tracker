@@ -86,8 +86,20 @@ class PlayerProfitTracker {
             'legacy'           => true,
             'entry_price'      => null,   // no longer sold
             'rounds'           => 4,      // Phase 1..4
-            'profit_target_pct'=> 0.10,   // +10% per phase — dashboard-verified
-            'picks_required'   => 10,     // dashboard-verified
+            // ⚠ ONLY PHASE 1 IS VERIFIED. The dashboard showed $25,000 -> $27,500
+            // = +10% for Phase 1 and nothing about phases 2-4. Lucas believes the
+            // targets ESCALATE (roughly 10% / 15% / 25% / ...), and Playvo's FAQ
+            // says the target is "set for that phase" — phase-specific language
+            // that supports him — but the percentages are published NOWHERE.
+            // So per-phase targets are recorded as UNKNOWN rather than assumed
+            // flat. getRules() returns null for an unverified phase and the caller
+            // must surface that, instead of showing a confident wrong target.
+            // A wrong target on phase 2-4 would tell him he had passed when he
+            // had not, which is the expensive direction on a legacy account that
+            // cannot be repurchased.
+            'profit_target_pct'=> 0.10,          // phase 1 only; see below
+            'profit_target_by_phase' => [1 => 0.10, 2 => null, 3 => null, 4 => null],
+            'picks_required'   => 10,     // dashboard-verified (phase 1: "40 / 10")
             'live_picks'       => true,
             'min_percentage'   => 1.0,
             'max_percentage'   => 5.0,
@@ -122,11 +134,28 @@ class PlayerProfitTracker {
                     'min_percentage' => null, 'max_percentage' => null,
                     'live_picks' => null, 'rounds' => null];
         }
+        // Per-phase target, where the type declares one. A phase with no verified
+        // target returns null + target_unknown, so the UI can say "not known for
+        // this phase" rather than render a number nobody has confirmed.
+        $phaseNo = (int) filter_var($config['current_phase'] ?? 'Phase 1', FILTER_SANITIZE_NUMBER_INT);
+        $phaseNo = $phaseNo ?: 1;
+        $targetPct = $base['profit_target_pct'] ?? null;
+        $targetUnknown = false;
+        if (isset($base['profit_target_by_phase'])) {
+            $byPhase = $config['profit_target_by_phase'] ?? $base['profit_target_by_phase'];
+            if (array_key_exists($phaseNo, $byPhase)) {
+                $targetPct = $byPhase[$phaseNo];
+                $targetUnknown = ($targetPct === null);
+            }
+        }
+
         return [
             'challenge_type'    => $type,
             'unknown_type'      => false,
+            'phase_no'          => $phaseNo,
+            'target_unknown'    => $targetUnknown,
             'rounds'            => $config['rounds']            ?? $base['rounds'],
-            'profit_target_pct' => $config['profit_target_pct'] ?? $base['profit_target_pct'],
+            'profit_target_pct' => $config['profit_target_pct'] ?? $targetPct,
             'picks_required'    => $config['picks_required']    ?? $base['picks_required'],
             'live_picks'        => $config['live_picks']        ?? $base['live_picks'],
             'min_percentage'    => $config['risk_min_pct']      ?? $base['min_percentage'],
@@ -835,8 +864,11 @@ class PlayerProfitTracker {
         $startBalance = $config['phase_start_balance'];
         // Profit target per round, per challenge type: Standard/Blitz +25%, Pro +15%.
         $statusRules = $this->getRules($config);
-        $targetPct = $statusRules['profit_target_pct'] ?? 0.20;
-        $profitTarget = ($config['current_phase'] !== 'Funded') ? $startBalance * $targetPct : 0;
+        $targetPct = $statusRules['profit_target_pct'];
+        // An unverified phase target must not render as a number. null propagates
+        // and target_unknown tells the UI to say so.
+        $profitTarget = ($config['current_phase'] !== 'Funded' && $targetPct !== null)
+            ? $startBalance * $targetPct : (($targetPct === null) ? null : 0);
         $profitProgress = $currentBalance - $startBalance;
         $profitPercentage = ($profitProgress / $startBalance) * 100;
         
@@ -866,7 +898,10 @@ class PlayerProfitTracker {
             'profit_target' => $profitTarget,
             'profit_progress' => $profitProgress,
             'profit_percentage' => $profitPercentage,
-            'target_met' => ($config['current_phase'] !== 'Funded') ? $profitProgress >= $profitTarget : true,
+            // ⚠ Never claim a target is met when the target itself is unknown.
+            'target_met' => ($profitTarget === null) ? null
+                : (($config['current_phase'] !== 'Funded') ? $profitProgress >= $profitTarget : true),
+            'target_unknown' => $statusRules['target_unknown'] ?? false,
             'today_pnl' => $todayPnL,
             'max_drawdown' => $maxDrawdown,
             'total_picks' => $totalPicks,
