@@ -69,6 +69,33 @@ class PlayerProfitTracker {
             'min_percentage'   => 1.0,
             'max_percentage'   => 5.0,
         ],
+        // ⚠ LEGACY — not sold on playvo.us/challenges as of 2026-11-04 (only
+        // Standard/Pro/Blitz are), but the FAQ still documents it and Lucas holds
+        // a live 25k Profit account. Retired from sale, existing accounts run on.
+        // Numbers below are read from HIS DASHBOARD, not from any published page —
+        // Playvo's own site is wrong or silent about this product.
+        //   Phase 1 target $27,500 on a $25,000 start = +10%
+        //   "Completed picks  40 / 10  Complete"       = 10 pick minimum
+        //   Limits panel shows MAX DRAWDOWN ONLY — no daily loss limit displayed.
+        // Payout ladder (FAQ "earn up to" x, base inferred as the ENTRY FEE):
+        //   L1 0.1x · L2 2x · L3 10x (redemptions unlock) · L4 50x
+        //   On the 25k ($499.99 entry): $50 / $1,000 / $5,000 / $24,999.50.
+        //   ⚠ INFERRED, not quoted — confirm with support before relying on it.
+        'Profit' => [
+            'label'            => 'Profit (legacy)',
+            'legacy'           => true,
+            'entry_price'      => null,   // no longer sold
+            'rounds'           => 4,      // Phase 1..4
+            'profit_target_pct'=> 0.10,   // +10% per phase — dashboard-verified
+            'picks_required'   => 10,     // dashboard-verified
+            'live_picks'       => true,
+            'min_percentage'   => 1.0,
+            'max_percentage'   => 5.0,
+            'payout_multiples' => [1 => 0.1, 2 => 2.0, 3 => 10.0, 4 => 50.0],
+            'payout_base'      => 'entry_fee',
+            'payout_confirmed' => false,  // "up to" may hide a cap/condition
+            'redemptions_from_phase' => 3,
+        ],
     ];
 
     // Bankroll sizes offered (playvo.us home page pricing, 2026-11-04).
