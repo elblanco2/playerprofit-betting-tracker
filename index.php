@@ -140,18 +140,26 @@ class PlayerProfitTracker {
     //   Max drawdown: "Your account cannot drop 10% or more below your highest
     //   balance (your 'high-water mark')."  -> TRAILING, anchored to the PEAK.
     //
-    //   Daily loss limit: the FAQ states it is "relative to the starting balance"
-    //   -> STATIC, anchored to the START. DIFFERENT ANCHOR from max drawdown.
-    //   ⚠ The PERCENTAGE is not stated anywhere on playvo.us. 10% comes from
-    //   third-party reviews only; see DAILY_LOSS_CONFIRMED below. Do not present
-    //   it to the user as an enforced limit until confirmed from the dashboard.
+    //   Daily loss limit: NONE. Two live dashboards (1k Pro, 25k Profit) each show
+    //   a "Limits" panel containing only "Max drawdown". The FAQ's passing mention
+    //   of a daily limit "relative to the starting balance" is not borne out by the
+    //   product. See DAILY_LOSS_APPLIES.
     //
     // Previously this file carried 15% in four places (two as *0.85, two as *0.15)
     // and the UI anchored its display to account_size while the violation check
     // anchored to highest_balance. Both are fixed; keep them derived from here.
     const MAX_DRAWDOWN_PCT    = 0.10;   // of HIGHEST balance (trailing)
-    const DAILY_LOSS_PCT      = 0.10;   // of STARTING balance (static) — UNCONFIRMED
-    const DAILY_LOSS_CONFIRMED = false; // flips true once verified on the dashboard
+    // ⛔ NO DAILY LOSS LIMIT EXISTS ON PLAYVO. Settled 2026-11-05 from TWO live
+    // dashboards of DIFFERENT types (1k Bankroll Pro, 25k Profit): the "Limits"
+    // panel on each contains exactly ONE item, "Max drawdown". A November
+    // calendar shows daily P&L but no daily cap. The "10% daily, 24h reset"
+    // figure came only from third-party reviews and almost certainly describes
+    // the OLD PlayerProfit product, not Playvo.
+    // Kept at 0 and DISABLED rather than deleted: the check below reports
+    // "not applicable" instead of silently vanishing, so a future reader can see
+    // the rule was investigated and ruled out, not forgotten.
+    const DAILY_LOSS_PCT       = 0.0;
+    const DAILY_LOSS_APPLIES   = false;
 
     /**
      * The one drawdown calculation. Every check and every display must call this
@@ -703,11 +711,13 @@ class PlayerProfitTracker {
         $data = $this->loadData();
         $violations = [];
         
-        // Check daily loss limit — anchored to the STARTING balance, not the peak.
-        // ⚠ The percentage is UNCONFIRMED (not stated on playvo.us); see DAILY_LOSS_PCT.
+        // Playvo has NO daily loss limit (see DAILY_LOSS_APPLIES). Today's P&L is
+        // still computed and shown — their dashboard has a daily calendar too —
+        // but it is NOT a violation. Previously this fired at 10% of account size
+        // and would have reported a rule that does not exist.
         $todayPnL = $this->getDailyPnL(date('Y-m-d'));
-        $dailyLossLimit = $config['account_size'] * self::DAILY_LOSS_PCT;
-        if (abs($todayPnL) > $dailyLossLimit && $todayPnL < 0) {
+        $dailyLossLimit = self::DAILY_LOSS_APPLIES ? $config['account_size'] * self::DAILY_LOSS_PCT : 0;
+        if (self::DAILY_LOSS_APPLIES && abs($todayPnL) > $dailyLossLimit && $todayPnL < 0) {
             $violations[] = [
                 'type' => 'daily_loss',
                 'message' => "Daily loss limit exceeded: $" . number_format(abs($todayPnL), 2) . " / $" . number_format($dailyLossLimit, 2),
@@ -867,8 +877,8 @@ class PlayerProfitTracker {
             'risk_limits' => $riskLimits,
             'drawdown_protected' => $riskLimits['drawdown_protected'],
             'drawdown' => $this->drawdownStatus($currentBalance, $config['highest_balance']),
-            'daily_loss_limit' => $config['account_size'] * self::DAILY_LOSS_PCT,
-            'daily_loss_confirmed' => self::DAILY_LOSS_CONFIRMED,
+            'daily_loss_applies' => self::DAILY_LOSS_APPLIES,
+            'daily_loss_limit' => self::DAILY_LOSS_APPLIES ? $config['account_size'] * self::DAILY_LOSS_PCT : null,
             'balance_from_peak_pct' => (($currentBalance / $config['highest_balance']) * 100) - 100
         ];
     }
