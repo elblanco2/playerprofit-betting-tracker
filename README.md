@@ -1,32 +1,54 @@
-# 🏆 PlayerProfit Betting Tracker v2.0
+# 🏆 Playvo Betting Tracker v2.1
 
-A comprehensive betting tracking application designed specifically for **PlayerProfit** prop firm challenge participants. Features first-time setup wizard, multi-account support, AI-powered bet import, real-time compliance monitoring, and advanced analytics with a modern responsive UI.
+> **Playvo** is the current name of the platform formerly called **PlayerProfit**
+> (`playerprofit.com` now redirects to `playvo.us`). Rules below were verified
+> against playvo.us on **2026-11-04**.
+
+A comprehensive betting tracking application designed specifically for **Playvo** (ex-PlayerProfit) challenge participants. Features first-time setup wizard, multi-account support, AI-powered bet import, real-time compliance monitoring, and advanced analytics with a modern responsive UI.
 
 [![GitHub release (latest by date)](https://img.shields.io/github/v/release/elblanco2/playerprofit-betting-tracker)](https://github.com/elblanco2/playerprofit-betting-tracker/releases)
 [![GitHub](https://img.shields.io/github/license/elblanco2/playerprofit-betting-tracker)](LICENSE)
 [![Docker](https://img.shields.io/badge/docker-ready-blue.svg)](Dockerfile)
 
-## 🎯 PlayerProfit Account Integration
+## 🎯 Playvo Challenge Integration
 
-This tracker is built specifically for PlayerProfit's prop firm structure:
+Verified against [playvo.us/challenges](https://www.playvo.us/challenges) and
+[playvo.us/faqs](https://www.playvo.us/faqs) on **2026-11-04**.
 
-### **Standard Accounts**
-- **Account Sizes:** $1K, $5K, $10K, $25K, $50K, $100K  
-- **Risk Limits:** 1% - 5% of account balance per bet
-- **Phases:** Phase 1 → Phase 2 → Funded
-- **Requirements:** 20 picks minimum per phase
+### The three challenge types — each has DIFFERENT rules
 
-### **Pro Accounts** 
-- **Account Sizes:** $5K, $10K, $25K, $50K, $100K
-- **Risk Limits:** 2% - 10% of account balance per bet  
-- **Phases:** Phase 1 → Phase 2 → Funded
-- **Requirements:** 20 picks minimum per phase
+| Type | Entry | Rounds | Profit target / round | Picks / round | Live picks |
+|---|---|---|---|---|---|
+| **Standard** | $19.99 | 2 | **+25%** | **25** | ❌ **not allowed** |
+| **Pro** | $29.99 | 2 | **+15%** | 20 | ✅ |
+| **Blitz** | $39.99 | **1** | +25% | 20 | ✅ |
 
-### **💎 High Roller Account (Special)**
-- **Account Size:** $250K (Pro tier only)
-- **Risk Limits:** $5,000 - $25,000 per bet (2% - 10%)
-- **Availability:** Not typically available - requires acknowledgment
-- **Target:** $50,000 profit per phase (20%)
+### Rules common to all types
+
+- **Risk per pick:** **1% – 5%** of bankroll ("1% to 5% of bankroll per pick")
+- **Max drawdown:** **10%**, *trailing from your high-water mark* —
+  *"Your account cannot drop 10% or more below your highest balance."*
+  **The floor rises as you profit:** peak $1,000 → floor $900; peak $1,200 → floor $1,080.
+- **Daily loss limit:** anchored to your **starting** balance (static), *not* the peak.
+  ⚠️ **The percentage is not published on playvo.us.** This app assumes **10%** and
+  labels it unconfirmed (`DAILY_LOSS_CONFIRMED = false`) until verified on your
+  dashboard. Shown as a guide, not asserted as fact.
+- **Payout once funded:** 70% of profit · **Early cash-out:** 10% fee
+
+### Bankroll sizes
+
+$1,000 ($29.99) · $5,000 ($109.99) · $10,000 ($209.99) ·
+$25,000 ($499.99) · $50,000 ($899.99) · $100,000 ($1,499.99)
+
+### ⚠️ Scope: new accounts only
+
+This tracker targets the **current** Playvo products. **Grandfathered PlayerProfit
+accounts are out of scope** — their original terms are not recoverable online
+(playerprofit.com redirects to playvo.us), and applying today's rules to an old
+account would show the wrong limits. If you hold one, track it by hand.
+
+⚠️ **An account's rules are frozen when it is created**, so a later change to a
+Playvo product cannot rewrite the terms of an account already in progress.
 
 ## 🚀 Quick Start
 
@@ -40,7 +62,7 @@ chmod +x run.sh
 ### **2. Access Dashboard**
 - Open: http://localhost:8004
 - Complete account setup on first visit
-- Choose your account tier (Standard/Pro)
+- Choose your challenge type (Standard / Pro / Blitz)
 - Select your account size
 
 ### **3. Start Tracking**
@@ -52,7 +74,7 @@ chmod +x run.sh
 ## 📊 Key Features
 
 ### **🎯 Multi-Account Management**
-- **Multiple Accounts:** Track Standard and Pro accounts simultaneously
+- **Multiple Accounts:** Standard, Pro and Blitz tracked simultaneously, each under its own rules
 - **Account Switching:** Seamless switching between different account sizes
 - **Isolated Data:** Each account maintains separate betting history
 - **Real-time Analytics:** Individual progress tracking per account
@@ -72,15 +94,15 @@ chmod +x run.sh
 - **API Integration:** Future API connectivity options
 
 ### **🎯 Risk Management**
-- **Daily Loss Monitoring:** 10% max daily loss tracking
-- **Drawdown Protection:** 15% max drawdown alerts  
+- **Daily Loss Monitoring:** 10% of starting balance ⚠️ *unconfirmed — see rules above*
+- **Drawdown Protection:** 10% trailing from your high-water mark, showing the floor and dollars-to-breach  
 - **Bet Size Validation:** Automatic min/max enforcement
-- **Pick Count Tracking:** 20 pick minimum enforcement
+- **Pick Count Tracking:** per challenge type (Standard 25, Pro/Blitz 20)
 - **Parlay Support:** Reverse odds calculation for winning parlays
 
 ### **📈 Phase Progression**
-- **Phase 1:** 20% profit target to advance
-- **Phase 2:** 20% profit target to get funded  
+- **Round 1:** target per type (+25% Standard/Blitz, +15% Pro)
+- **Round 2:** same target again (Blitz is a single round)  
 - **Funded:** No profit target, focus on consistency
 - **Auto-advancement:** Visual indicators when targets are met
 
@@ -100,9 +122,9 @@ chmod +x run.sh
 ## 🎮 Usage Guide
 
 ### **Account Setup**
-1. **Choose Tier:** Standard vs Pro accounts
+1. **Choose Type:** Standard, Pro or Blitz — the rules differ
 2. **Select Size:** Pick your account size
-3. **Start Phase 1:** Begin with 20% profit target
+3. **Start Round 1:** the target depends on the type you chose
 
 ### **Adding Bets**
 - **Risk Validation:** Automatic min/max checking
@@ -117,8 +139,8 @@ chmod +x run.sh
 - **Target Recalculation:** New targets for next phase
 
 ### **Compliance Monitoring**
-- **Daily Loss Tracking:** 10% limit monitoring
-- **Drawdown Calculations:** 15% max from peak
+- **Daily Loss Tracking:** against the daily limit ⚠️ *% unconfirmed*
+- **Drawdown Calculations:** 10% from peak, trailing
 - **Activity Tracking:** Inactivity timer for funded accounts
 - **Pick Requirements:** 20 minimum pick enforcement
 
@@ -186,57 +208,51 @@ chmod +x run.sh
 - **Automatic Backup** - All data persists between restarts
 
 ### **Risk Calculations**
-- **Daily Loss:** Sum of today's P&L vs 10% account size
+- **Daily Loss:** today's P&L vs 10% of the STARTING balance ⚠️ *unconfirmed*
 - **Max Drawdown:** Peak balance minus current lowest point
-- **Profit Target:** 20% of phase starting balance
-- **Pick Count:** Total completed bets vs 20 minimum
+- **Profit Target:** per type — 25% (Standard/Blitz) or 15% (Pro) of the round's starting balance
+- **Pick Count:** completed bets vs the type's minimum (25 or 20)
 
-## 🎯 PlayerProfit Rules Compliance
+## 🎯 Playvo rules compliance
 
-### **Standard Account Rules**
-| Rule | Limit | Tracking |
-|------|-------|----------|
-| Min Risk | $10 | ✅ Enforced |
-| Max Risk | $50 | ✅ Enforced |
-| Daily Loss | 10% | ✅ Monitored |
-| Max Drawdown | 15% | ✅ Monitored |
-| Pick Minimum | 20 picks | ✅ Tracked |
-| Profit Target | 20% (Phase 1 & 2) | ✅ Tracked |
-| Inactivity | 5 days (Funded) | ✅ Monitored |
+### Per-type rules, as enforced by this app
 
-### **Pro Account Rules** 
-| Rule | Limit | Tracking |
-|------|-------|----------|
-| Min Risk | $100 | ✅ Enforced |
-| Max Risk | $500 | ✅ Enforced |
-| Daily Loss | 10% | ✅ Monitored |
-| Max Drawdown | 15% | ✅ Monitored |
-| Pick Minimum | 20 picks | ✅ Tracked |
-| Profit Target | 20% (Phase 1 & 2) | ✅ Tracked |
-| Inactivity | 5 days (Funded) | ✅ Monitored |
+| Rule | Standard | Pro | Blitz |
+|---|---|---|---|
+| Risk per pick | 1–5% | 1–5% | 1–5% |
+| Max drawdown | 10% trailing from peak | 10% trailing | 10% trailing |
+| Daily loss | 10% of start ⚠️ unconfirmed | same | same |
+| Pick minimum | **25** | 20 | 20 |
+| Profit target / round | **+25%** | **+15%** | +25% |
+| Rounds | 2 | 2 | **1** |
+| Live picks | ❌ | ✅ | ✅ |
+| Inactivity (funded) | 5 days | 5 days | 5 days |
+
+**Worked example — $1,000 Pro:** risk $10–$50 per pick · target $150 per round ·
+20 picks · drawdown floor $900, rising to $908.85 once the balance reaches $1,009.83.
 
 ## 🚨 Violation Alerts
 
 ### **Critical Violations (Account Ending)**
-- **Daily Loss Exceeded** - More than 10% loss in one day
-- **Max Drawdown Hit** - More than 15% drawdown from peak  
+- **Daily Loss Exceeded** - more than the daily limit in one day ⚠️ *% unconfirmed*
+- **Max Drawdown Hit** - 10% or more below your high-water mark  
 - **Inactivity Violation** - More than 5 days without activity (Funded)
 
 ### **Warning Alerts**
-- **Pick Minimum Not Met** - Less than 20 completed picks
+- **Pick Minimum Not Met** - fewer picks than the type requires (25 or 20)
 - **Approaching Limits** - Getting close to violation thresholds
 
 ## 🎉 Phase Advancement
 
 ### **Phase 1 → Phase 2**
-- ✅ 20% profit target achieved
-- ✅ 20 picks minimum completed  
+- ✅ the type's profit target achieved
+- ✅ the type's pick minimum completed  
 - ✅ No active violations
 - 🎯 **Click "Advance to Phase 2"**
 
 ### **Phase 2 → Funded**
-- ✅ 20% profit target achieved  
-- ✅ 20 picks minimum completed
+- ✅ the type's profit target achieved  
+- ✅ the type's pick minimum completed
 - ✅ No active violations
 - 🎯 **Click "Advance to Funded Account"**
 
