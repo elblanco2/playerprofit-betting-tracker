@@ -32,19 +32,80 @@ class PlayerProfitTracker {
     private $currentAccountId;
     private $apiKeyManager;
     
-    // PlayerProfit Account Configurations
+    // ── Playvo challenge types — verified against playvo.us/challenges 2026-11-04 ──
+    // Risk per pick is 1-5% for ALL types ("1% to 5% of bankroll per pick").
+    // NEW ACCOUNTS ONLY. Grandfathered PlayerProfit accounts are deliberately
+    // out of scope (Luca, 2026-11-04): their original terms are not recoverable
+    // (playerprofit.com now 301s to playvo.us) and guessing them would put wrong
+    // limits on a real account.
     private $accountConfigs = [
         'Standard' => [
-            'min_percentage' => 1.0, // 1% minimum
-            'max_percentage' => 5.0, // 5% maximum
-            'daily_loss_limit' => 10.0 // 10% daily loss limit
+            'label'            => 'Standard',
+            'entry_price'      => 19.99,
+            'rounds'           => 2,
+            'profit_target_pct'=> 0.25,   // +25% per round
+            'picks_required'   => 25,
+            'live_picks'       => false,  // ⚠ Standard does NOT allow live picks
+            'min_percentage'   => 1.0,
+            'max_percentage'   => 5.0,
         ],
         'Pro' => [
-            'min_percentage' => 2.0, // 2% minimum
-            'max_percentage' => 10.0, // 10% maximum
-            'daily_loss_limit' => 10.0 // 10% daily loss limit
-        ]
+            'label'            => 'Pro',
+            'entry_price'      => 29.99,
+            'rounds'           => 2,
+            'profit_target_pct'=> 0.15,   // +15% per round
+            'picks_required'   => 20,
+            'live_picks'       => true,
+            'min_percentage'   => 1.0,    // was 2.0 — playvo.us says 1-5% for all types
+            'max_percentage'   => 5.0,    // was 10.0 — same
+        ],
+        'Blitz' => [
+            'label'            => 'Blitz',
+            'entry_price'      => 39.99,
+            'rounds'           => 1,      // single round
+            'profit_target_pct'=> 0.25,
+            'picks_required'   => 20,
+            'live_picks'       => true,
+            'min_percentage'   => 1.0,
+            'max_percentage'   => 5.0,
+        ],
     ];
+
+    // Bankroll sizes offered (playvo.us home page pricing, 2026-11-04).
+    private $bankrollSizes = [
+        1000 => 29.99, 5000 => 109.99, 10000 => 209.99,
+        25000 => 499.99, 50000 => 899.99, 100000 => 1499.99,
+    ];
+
+    /**
+     * Rules for ONE account. Reads them from the account's own config when
+     * present, falling back to the challenge-type defaults.
+     *
+     * ⚠ Rules live on the ACCOUNT, not on the type. An account stores the rules
+     * it was opened under, so a later change to Playvo's product cannot silently
+     * rewrite the terms of an account already in progress.
+     */
+    public function getRules($config) {
+        $type = $config['challenge_type'] ?? $config['account_tier'] ?? 'Pro';
+        $base = $this->accountConfigs[$type] ?? null;
+        if ($base === null) {
+            // Unknown type: refuse to invent limits. The caller must surface this.
+            return ['challenge_type' => $type, 'unknown_type' => true,
+                    'profit_target_pct' => null, 'picks_required' => null,
+                    'min_percentage' => null, 'max_percentage' => null,
+                    'live_picks' => null, 'rounds' => null];
+        }
+        return [
+            'challenge_type'    => $type,
+            'unknown_type'      => false,
+            'rounds'            => $config['rounds']            ?? $base['rounds'],
+            'profit_target_pct' => $config['profit_target_pct'] ?? $base['profit_target_pct'],
+            'picks_required'    => $config['picks_required']    ?? $base['picks_required'],
+            'live_picks'        => $config['live_picks']        ?? $base['live_picks'],
+            'min_percentage'    => $config['risk_min_pct']      ?? $base['min_percentage'],
+            'max_percentage'    => $config['risk_max_pct']      ?? $base['max_percentage'],
+        ];
+    }
 
     // ── Playvo rule constants — SINGLE SOURCE OF TRUTH ──────────────────────────
     // Verified against playvo.us/faqs and playvo.us/challenges on 2026-11-04.
@@ -89,7 +150,9 @@ class PlayerProfitTracker {
      * Get risk limits for account based on current balance and drawdown protection
      */
     public function getRiskLimits($accountTier, $accountSize, $currentBalance = null, $highestBalance = null) {
-        $config = $this->accountConfigs[$accountTier];
+        // An unknown challenge type must not produce null limits silently — that
+        // turns the violation check into a no-op. Fall back to the tightest rule.
+        $config = $this->accountConfigs[$accountTier] ?? ['min_percentage' => 1.0, 'max_percentage' => 5.0];
         
         // Use current balance if provided, otherwise use account size
         $balanceForCalculation = $currentBalance ?? $accountSize;
@@ -144,24 +207,24 @@ class PlayerProfitTracker {
      * Get all available PlayerProfit account configurations
      */
     public function getAvailableAccountTypes() {
-        return [
-            'Standard' => [
-                ['size' => 1000, 'display' => '$1,000', 'cost' => 'TBD'],
-                ['size' => 5000, 'display' => '$5,000', 'cost' => 'TBD'],
-                ['size' => 10000, 'display' => '$10,000', 'cost' => '$274'],
-                ['size' => 25000, 'display' => '$25,000', 'cost' => 'TBD'],
-                ['size' => 50000, 'display' => '$50,000', 'cost' => 'TBD'],
-                ['size' => 100000, 'display' => '$100,000', 'cost' => 'TBD']
-            ],
-            'Pro' => [
-                ['size' => 5000, 'display' => '$5,000', 'cost' => 'TBD'],
-                ['size' => 10000, 'display' => '$10,000', 'cost' => 'TBD'],
-                ['size' => 25000, 'display' => '$25,000', 'cost' => 'TBD'],
-                ['size' => 50000, 'display' => '$50,000', 'cost' => 'TBD'],
-                ['size' => 100000, 'display' => '$100,000', 'cost' => 'TBD']
-            ]
-        ];
+        // Generated from $bankrollSizes + $accountConfigs so a product change is a
+        // ONE-PLACE edit. Previously this list, the setup cards and the <select>
+        // were three separate hardcoded copies, so a new size added here never
+        // appeared in the UI.
+        $out = [];
+        foreach ($this->accountConfigs as $type => $cfg) {
+            $out[$type] = [];
+            foreach ($this->bankrollSizes as $size => $price) {
+                $out[$type][] = [
+                    'size'    => $size,
+                    'display' => '$' . number_format($size),
+                    'cost'    => '$' . number_format($price, 2),
+                ];
+            }
+        }
+        return $out;
     }
+
     
     /**
      * Create a new account based on user selection
@@ -261,8 +324,19 @@ class PlayerProfitTracker {
         ];
         
         // Initialize account config
+        $typeDefaults = $this->accountConfigs[$tier] ?? [];
         $initialConfig = [
             'account_tier' => $tier,
+            'challenge_type' => $tier,
+            // Rules are frozen ON the account at creation, so a later change to
+            // Playvo's product cannot rewrite the terms of an account in progress.
+            'rules_version' => '2026-11',
+            'rounds'            => $typeDefaults['rounds'] ?? null,
+            'profit_target_pct' => $typeDefaults['profit_target_pct'] ?? null,
+            'picks_required'    => $typeDefaults['picks_required'] ?? null,
+            'live_picks'        => $typeDefaults['live_picks'] ?? null,
+            'risk_min_pct'      => $typeDefaults['min_percentage'] ?? null,
+            'risk_max_pct'      => $typeDefaults['max_percentage'] ?? null,
             'account_size' => $size,
             'current_phase' => 'Phase 1',
             'start_date' => date('Y-m-d'),
@@ -625,12 +699,16 @@ class PlayerProfitTracker {
             ];
         }
         
-        // Check pick minimum (20 picks required)
+        $rules = $this->getRules($config);
+        $picksRequired = $rules['picks_required'] ?? 20;
+        // Check pick minimum — per challenge type (Standard 25, Pro/Blitz 20)
+        $rules = $this->getRules($config);
+        $picksRequired = $rules['picks_required'] ?? 20;
         $totalPicks = count($data['bets']);
-        if ($totalPicks < 20) {
+        if ($totalPicks < $picksRequired) {
             $violations[] = [
                 'type' => 'pick_minimum',
-                'message' => "Minimum picks not met: $totalPicks / 20 picks required",
+                'message' => "Minimum picks not met: $totalPicks / {$picksRequired} picks required",
                 'severity' => 'warning'
             ];
         }
@@ -718,7 +796,10 @@ class PlayerProfitTracker {
         
         $currentBalance = $data['account_balance'];
         $startBalance = $config['phase_start_balance'];
-        $profitTarget = ($config['current_phase'] !== 'Funded') ? $startBalance * 0.2 : 0;
+        // Profit target per round, per challenge type: Standard/Blitz +25%, Pro +15%.
+        $statusRules = $this->getRules($config);
+        $targetPct = $statusRules['profit_target_pct'] ?? 0.20;
+        $profitTarget = ($config['current_phase'] !== 'Funded') ? $startBalance * $targetPct : 0;
         $profitProgress = $currentBalance - $startBalance;
         $profitPercentage = ($profitProgress / $startBalance) * 100;
         
@@ -752,7 +833,9 @@ class PlayerProfitTracker {
             'today_pnl' => $todayPnL,
             'max_drawdown' => $maxDrawdown,
             'total_picks' => $totalPicks,
-            'picks_remaining' => max(0, 20 - $totalPicks),
+            'picks_remaining' => max(0, ($statusRules['picks_required'] ?? 20) - $totalPicks),
+            'rules' => $statusRules,
+            'profit_target_pct' => $targetPct,
             'days_since_activity' => $daysSinceActivity,
             'risk_limits' => $riskLimits,
             'drawdown_protected' => $riskLimits['drawdown_protected'],
