@@ -45,6 +45,45 @@ class PlayerProfitTracker {
             'daily_loss_limit' => 10.0 // 10% daily loss limit
         ]
     ];
+
+    // ── Playvo rule constants — SINGLE SOURCE OF TRUTH ──────────────────────────
+    // Verified against playvo.us/faqs and playvo.us/challenges on 2026-11-04.
+    //
+    //   Max drawdown: "Your account cannot drop 10% or more below your highest
+    //   balance (your 'high-water mark')."  -> TRAILING, anchored to the PEAK.
+    //
+    //   Daily loss limit: the FAQ states it is "relative to the starting balance"
+    //   -> STATIC, anchored to the START. DIFFERENT ANCHOR from max drawdown.
+    //   ⚠ The PERCENTAGE is not stated anywhere on playvo.us. 10% comes from
+    //   third-party reviews only; see DAILY_LOSS_CONFIRMED below. Do not present
+    //   it to the user as an enforced limit until confirmed from the dashboard.
+    //
+    // Previously this file carried 15% in four places (two as *0.85, two as *0.15)
+    // and the UI anchored its display to account_size while the violation check
+    // anchored to highest_balance. Both are fixed; keep them derived from here.
+    const MAX_DRAWDOWN_PCT    = 0.10;   // of HIGHEST balance (trailing)
+    const DAILY_LOSS_PCT      = 0.10;   // of STARTING balance (static) — UNCONFIRMED
+    const DAILY_LOSS_CONFIRMED = false; // flips true once verified on the dashboard
+
+    /**
+     * The one drawdown calculation. Every check and every display must call this
+     * so they cannot drift apart again.
+     */
+    public function drawdownStatus($currentBalance, $highestBalance) {
+        $highestBalance = $highestBalance ?: $currentBalance;
+        $limit     = $highestBalance * self::MAX_DRAWDOWN_PCT;   // dollars allowed below peak
+        $floor     = $highestBalance - $limit;                    // balance that fails the account
+        $used      = max(0, $highestBalance - $currentBalance);   // how far below peak we are
+        return [
+            'high_water_mark'     => $highestBalance,
+            'limit'               => $limit,
+            'floor'               => $floor,
+            'used'                => $used,
+            'distance_to_breach'  => max(0, $currentBalance - $floor),
+            'pct_used'            => $limit > 0 ? ($used / $limit) * 100 : 0,
+            'breached'            => $used >= $limit,
+        ];
+    }
     
     /**
      * Get risk limits for account based on current balance and drawdown protection
@@ -57,7 +96,7 @@ class PlayerProfitTracker {
         
         // Apply 15% drawdown protection - minimum balance allowed
         if ($highestBalance && $currentBalance) {
-            $minAllowedBalance = $highestBalance * 0.85; // 15% drawdown limit
+            $minAllowedBalance = $highestBalance * (1 - self::MAX_DRAWDOWN_PCT); // Playvo: 10% below the high-water mark
             if ($currentBalance < $minAllowedBalance) {
                 // Account is below 15% drawdown limit - reduce risk
                 $balanceForCalculation = $minAllowedBalance;
@@ -71,7 +110,7 @@ class PlayerProfitTracker {
             'min_risk' => round($minRisk, 2),
             'max_risk' => $maxRisk,
             'balance_for_calculation' => $balanceForCalculation,
-            'drawdown_protected' => ($highestBalance && $currentBalance && $currentBalance < ($highestBalance * 0.85))
+            'drawdown_protected' => ($highestBalance && $currentBalance && $currentBalance < ($highestBalance * (1 - self::MAX_DRAWDOWN_PCT)))
         ];
     }
     
@@ -563,9 +602,10 @@ class PlayerProfitTracker {
         $data = $this->loadData();
         $violations = [];
         
-        // Check daily loss limit (10%)
+        // Check daily loss limit — anchored to the STARTING balance, not the peak.
+        // ⚠ The percentage is UNCONFIRMED (not stated on playvo.us); see DAILY_LOSS_PCT.
         $todayPnL = $this->getDailyPnL(date('Y-m-d'));
-        $dailyLossLimit = $config['account_size'] * 0.1;
+        $dailyLossLimit = $config['account_size'] * self::DAILY_LOSS_PCT;
         if (abs($todayPnL) > $dailyLossLimit && $todayPnL < 0) {
             $violations[] = [
                 'type' => 'daily_loss',
@@ -574,9 +614,9 @@ class PlayerProfitTracker {
             ];
         }
         
-        // Check max drawdown (15% from highest balance ever reached)
+        // Check max drawdown (Playvo: 10% below the highest balance ever reached)
         $maxDrawdown = $this->getMaxDrawdown();
-        $drawdownLimit = $config['highest_balance'] * 0.15;
+        $drawdownLimit = $config['highest_balance'] * self::MAX_DRAWDOWN_PCT;
         if ($maxDrawdown > $drawdownLimit) {
             $violations[] = [
                 'type' => 'max_drawdown',
@@ -716,6 +756,9 @@ class PlayerProfitTracker {
             'days_since_activity' => $daysSinceActivity,
             'risk_limits' => $riskLimits,
             'drawdown_protected' => $riskLimits['drawdown_protected'],
+            'drawdown' => $this->drawdownStatus($currentBalance, $config['highest_balance']),
+            'daily_loss_limit' => $config['account_size'] * self::DAILY_LOSS_PCT,
+            'daily_loss_confirmed' => self::DAILY_LOSS_CONFIRMED,
             'balance_from_peak_pct' => (($currentBalance / $config['highest_balance']) * 100) - 100
         ];
     }
@@ -6055,7 +6098,8 @@ $needsSetup = false; // Multi-account system handles setup automatically
                     <div class="status-card">
                         <div class="status-value">$<?= number_format($accountStatus['max_drawdown'], 2) ?></div>
                         <div class="status-label">Max Drawdown</div>
-                        <small>Limit: $<?= number_format($accountStatus['account_size'] * 0.15, 2) ?></small>
+                        <small>Limit: $<?= number_format($accountStatus['drawdown']['limit'], 2) ?> below peak $<?= number_format($accountStatus['drawdown']['high_water_mark'], 2) ?><br>
+                        Fails at $<?= number_format($accountStatus['drawdown']['floor'], 2) ?> — $<?= number_format($accountStatus['drawdown']['distance_to_breach'], 2) ?> to go (<?= number_format($accountStatus['drawdown']['pct_used'], 0) ?>% used)</small>
                     </div>
                     
                     <div class="status-card">
@@ -6107,7 +6151,7 @@ $needsSetup = false; // Multi-account system handles setup automatically
                     <div class="status-card">
                         <div class="status-value">$<?= number_format($accountStatus['max_drawdown'], 2) ?></div>
                         <div class="status-label">Max Drawdown</div>
-                        <div class="status-change">⚠️</div>
+                        <div class="status-change">of $<?= number_format($accountStatus['drawdown']['limit'], 2) ?> allowed — $<?= number_format($accountStatus['drawdown']['distance_to_breach'], 2) ?> to go</div>
                     </div>
                     
                     <div class="status-card">
